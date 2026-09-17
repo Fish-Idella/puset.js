@@ -1,13 +1,12 @@
 /*!
- * PuSet JavaScript Library v1.3.0
+ * PuSet JavaScript Library v2.0.0
  *
  * 本 API 集根据 jQuery 源码精简修改而来，只保留了最基础的 DOM 选择框架 .find() .filter() 以及 .not()
  * 修改的地方使用了 ECMAScript 6.0 标准，可能不支持旧版的浏览器。
  * 如果你需要在你的代码中使用它，请确保你的浏览器支持 ECMAScript 6.0
  *
- * Date: 2022年1月4日
+ * Date: 2022年3月24日
  */
-;
 (function (global, factory) {
 
     "use strict";
@@ -19,7 +18,7 @@
         // For environments that do not have a `window` with a `document`
         // (such as Node.js), expose a factory as module.exports.
         // This accentuates the need for the creation of a real `window`.
-        // e.g. var PuSet = require("puset")(window);
+        // e.g. var PuSet = require("jquery")(window);
         // See ticket #14549 for more info.
         module.exports = global.document ?
             factory(global, true) :
@@ -36,10 +35,6 @@
     // Pass this if window is not defined yet
 })(typeof window !== "undefined" ? window : this, function (window, noGlobal) {
 
-    // Edge <= 12 - 13+, Firefox <=18 - 45+, IE 10 - 11, Safari 5.1 - 9+, iOS 6 - 9.1
-    // throw exceptions when non-strict code (e.g., ASP.NET 4.5) accesses strict mode
-    // arguments.callee.caller (trac-13335). But as of PuSet 3.0 (2016), strict mode should be common
-    // enough that all such attempts are guarded in a try block.
     "use strict";
 
     var arr = [];
@@ -78,31 +73,6 @@
         return obj != null && obj === obj.window;
     };
 
-    var preservedScriptAttributes = {
-        type: true,
-        src: true,
-        noModule: true
-    };
-
-    function DOMEval(code, doc, node) {
-        doc = doc || document;
-
-        var i,
-            script = doc.createElement("script");
-
-        script.text = code;
-        if (node) {
-            for (i in preservedScriptAttributes) {
-                if (node[i]) {
-                    script[i] = node[i];
-                }
-            }
-        }
-        doc.head.appendChild(script).parentNode.removeChild(script);
-        return script;
-    }
-
-
     function toType(obj) {
         if (obj == null) {
             return obj + "";
@@ -113,19 +83,10 @@
             class2type[toString.call(obj)] || "object" :
             typeof obj;
     }
-    /* global Symbol */
-    // Defining this global in .eslintrc.json would create a danger of using the global
-    // unguarded in another place, it seems safer to define global only for this module
 
+    var rstandardizedAttributeName = /^(((?!\d)[\w\$][\w\$]*)|([1-9]\d*))$/,
 
-
-    var version = "1.3.0",
-
-        // Support: Android <=4.0 only
-        // Make sure we trim BOM and NBSP
-        rtrim = /^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g,
-
-        rstandardizedAttributeName = /^(((?!\d)[\w\$][\w\$]*)|([1-9]\d*))$/,
+        version = "2.0.0",
 
         // Define a local copy of PuSet
         PuSet = function (selector, context) {
@@ -135,15 +96,12 @@
             return new PuSet.fn.init(selector, context);
         };
 
-
     PuSet.fn = PuSet.prototype = {
 
-        // The current version of PuSet being used
         puset: version,
 
         constructor: PuSet,
 
-        // The default length of a PuSet object is 0
         length: 0,
 
         toArray: function () {
@@ -226,9 +184,10 @@
         // Behaves like an Array's method, not like a PuSet method.
         push: push,
         sort: arr.sort,
-        splice: arr.splice
-    };
+        splice: arr.splice,
+        indexOf: indexOf
 
+    };
 
     PuSet.extend = PuSet.fn.extend = function () {
         var options, name, src, copy, copyIsArray, clone,
@@ -264,25 +223,28 @@
 
                 // Extend the base object
                 for (name in options) {
-                    src = target[name];
                     copy = options[name];
 
+                    // Prevent Object.prototype pollution
                     // Prevent never-ending loop
-                    if (target === copy) {
+                    if (name === "__proto__" || target === copy) {
                         continue;
                     }
 
                     // Recurse if we're merging plain objects or arrays
                     if (deep && copy && (PuSet.isPlainObject(copy) ||
                         (copyIsArray = Array.isArray(copy)))) {
+                        src = target[name];
 
-                        if (copyIsArray) {
-                            copyIsArray = false;
-                            clone = src && Array.isArray(src) ? src : [];
-
+                        // Ensure proper type for the source value
+                        if (copyIsArray && !Array.isArray(src)) {
+                            clone = [];
+                        } else if (!copyIsArray && !PuSet.isPlainObject(src)) {
+                            clone = {};
                         } else {
-                            clone = src && PuSet.isPlainObject(src) ? src : {};
+                            clone = src;
                         }
+                        copyIsArray = false;
 
                         // Never move original objects, clone them
                         target[name] = PuSet.extend(deep, clone, copy);
@@ -363,35 +325,24 @@
 
         type: toType,
 
-        // Evaluates a script in a global context
-        globalEval: function (code) {
-            DOMEval(code);
-        },
-
         each: function (obj, callback) {
             var length, i = 0;
 
             if (isArrayLike(obj)) {
-                length = obj.length;
-                for (; i < length; i++) {
-                    if (callback.call(obj[i], i, obj[i]) === false) {
+                for (length = obj.length; i < length; i++) {
+                    if (callback(obj[i], i) === false) {
                         break;
                     }
                 }
             } else {
                 for (i in obj) {
-                    if (callback.call(obj[i], i, obj[i]) === false) {
+                    if (callback(obj[i], i) === false) {
                         break;
                     }
                 }
             }
 
             return obj;
-        },
-
-        // Support: Android <=4.0 only
-        trim: function (text) {
-            return text == null ? "" : (text + "").replace(rtrim, "");
         },
 
         // results is for internal usage only
@@ -416,8 +367,16 @@
             return arr == null ? -1 : indexOf.call(arr, elem, i);
         },
 
-        // Support: Android <=4.0 only, PhantomJS 1 only
-        // push.apply(_, arraylike) throws on ancient WebKit
+        /**
+         * 将第二个数组中的值添加到第一个数组中，并返回第一个数组。
+         * 
+         * Support: Android <=4.0 only, PhantomJS 1 only
+         * push.apply(_, arraylike) throws on ancient WebKit
+         * 
+         * @param {*} first 
+         * @param {*} second 
+         * @returns 
+         */
         merge: function (first, second) {
             var len = +second.length,
                 j = 0,
@@ -432,6 +391,14 @@
             return first;
         },
 
+        /**
+         * 使用指定的函数过滤数组中的元素，并返回过滤后的数组。
+         * 
+         * @param {Array} elems 
+         * @param {Function} callback 
+         * @param {Boolean} invert 
+         * @returns 
+         */
         grep: function (elems, callback, invert) {
             var callbackInverse,
                 matches = [],
@@ -451,7 +418,14 @@
             return matches;
         },
 
-        // arg is for internal usage only
+        /**
+         * 使用指定函数处理数组中的每个元素(或对象的每个属性)，并将处理结果封装为新的数组返回。
+         * 
+         * @param {Any} elems 需要处理的元素
+         * @param {Function} callback 
+         * @param {Any} arg 给 callback 传入的额外参数
+         * @returns {Any[]} 数组
+         */
         map: function (elems, callback, arg) {
             var length, value,
                 i = 0,
@@ -479,31 +453,19 @@
                 }
             }
 
-            // Flatten any nested arrays
+            // 展平任何嵌套数组 
             return concat.apply([], ret);
-        },
-
-        substr: function (str, start, end) {
-            str = "" + str;
-            start = PuSet.isNumeric(start) ? start : 0;
-            end = PuSet.isNumeric(end) ? end : str.length - start;
-            if (end < 0) {
-                end += str.length;
-            }
-            return str.substr(start).substr(0, end);
         },
 
         dir: function (obj, elem) {
 
-            var ret = null === obj ? "null" : typeof obj;
+            var type = null === obj ? "null" : typeof obj;
 
-            if ("object" != ret && "function" != ret) {
-                return ret + " is primitive type.";
+            if ("object" != type && "function" != type) {
+                return type + " is primitive type.";
             }
 
-            var key, value, type;
-
-            ret = [toType(obj), " = {", "\n\n\t"];
+            var key, value, ret = [toType(obj), " = {", "\n\n\t"];
 
             for (key in obj) {
                 try {
@@ -515,29 +477,25 @@
                 ret.push(rstandardizedAttributeName.test(key) ? key : JSON.stringify(key), ": ",
                     ("string" == typeof value ? JSON.stringify(value) :
                         "array" == type ? "[object Array]" :
-                            "function" == type ? ObjectFunctionString.replace("Object", key) : "" + value));
-                ret.push(",\n\n\t");
+                            "function" == type ? ObjectFunctionString.replace("Object", key) : "" + value), ",\n\n\t");
             }
             ret.pop();
             ret.push("\n\n}");
             ret = ret.join("");
-
 
             if (elem && (elem.innerText = ret));
             return ret;
         },
 
         alert: function (obj) {
-            window.alert(this.dir(obj));
-        },
-
-        guid: 1
+            window.alert(this.dir(obj, false));
+        }
 
     });
 
     // Populate the class2type map
     PuSet.each("Boolean Number String Function Array Date RegExp Object Error Symbol".split(" "),
-        function (i, name) {
+        function (name) {
             class2type["[object " + name + "]"] = name.toLowerCase();
         });
 
@@ -558,70 +516,36 @@
             typeof length === "number" && length > 0 && (length - 1) in obj;
     }
 
-
-
-    // var zeptoMatches = function (element, selector) {
-    // 	if (!selector || !element || element.nodeType !== 1) return false;
-    // 	var matchesSelector = element.matches || element.webkitMatchesSelector ||
-    // 		element.mozMatchesSelector || element.oMatchesSelector ||
-    // 		element.matchesSelector;
-    // 	if (matchesSelector) return matchesSelector.call(element, selector);
-    // };
-
-    if (!Element.prototype.matches) {
-        let fnElementMatches =
-            Element.prototype.matchesSelector ||
-            Element.prototype.mozMatchesSelector ||
-            Element.prototype.msMatchesSelector ||
-            Element.prototype.oMatchesSelector ||
-            Element.prototype.webkitMatchesSelector;
-
-        if (!isFunction(fnElementMatches)) {
-            fnElementMatches = function (s) {
-                var matches = (this.document || this.ownerDocument).querySelectorAll(s),
-                    i = matches.length;
-                while (--i >= 0 && matches.item(i) !== this) { }
-                return i > -1;
-            };
-        }
-
-        Element.prototype.matches = fnElementMatches;
-    }
-
     PuSet.fn.extend({
         find: function (selector) {
             let arr = [];
             if (selector && "string" === typeof selector) {
-                this.each(function () {
-                    PuSet.merge(arr, this.querySelectorAll(selector));
+                this.each(function (target) {
+                    PuSet.merge(arr, target.querySelectorAll(selector));
                 });
             }
             return this.pushStack(arr);
         },
         filter: function (selector) {
-            if (selector && "string" === typeof selector) {
+            if (selector) {
+                selector = this.constructor(selector);
                 return this.pushStack(PuSet.grep(this, function (element) {
-                    return element.matches(selector);
-                }));
+                    return selector.indexOf(element, 0) < 0;
+                }, true));
             }
-            return this.pushStack([]);
+            return this;
         },
         not: function (selector) {
-            if (!selector) {
-                return this;
+            if (selector) {
+                selector = this.constructor(selector);
+                return this.pushStack(PuSet.grep(this, function (element) {
+                    return selector.indexOf(element, 0) < 0;
+                }, false));
             }
-
-            selector = this.constructor(selector);
-
-            return this.pushStack(PuSet.grep(this, function (element, _i) {
-                return PuSet.inArray(element, selector, 0) < 0;
-            }));
-
+            return this;
         },
         is: function (selector) {
-            return (this.length === 1) ?
-                Object.is(this.get(0), this.constructor(selector).get(0)) :
-                false;
+            return (this.length === 1) ? Object.is(this.get(0), this.constructor(selector).get(0)) : false;
         }
     });
 
@@ -681,6 +605,7 @@
 
     // Initialize central reference
     rootPuSet = PuSet(document);
+
 
 
     /*
@@ -758,149 +683,47 @@
         };
     });
 
-
-    /*! URL解析 未完成
-     *  var rurl = new RegExp(
-     *			"^(([^\\/]+\\:)?" +
-     *			"(?:\\/\\/(([^\\/]+?)(?:\\:([^\\/\\:]+))?|))?(?=\/))?" +
-     *			"((?:\\.*\\/)?[^\\?\\#]+)" +
-     *			"(\\?[^\\#]+)?(\\#.*)?$",
-     *			"i");
-     */
-    PuSet.url = function (url, base) {
+    PuSet.URL = function (url, base) {
         return (new (window.URL || window.webkitURL)(url, base || window.location.href));
     };
 
     PuSet.get = function (url, callback) {
-        var requester = null;
-        if (window.XMLHttpRequest) {
-            // code for IE7+, Firefox, Chrome, Opera, Safari
-            requester = new XMLHttpRequest();
-        } else {
-            // code for IE6, IE5
-            requester = new ActiveXObject("Microsoft.XMLHTTP");
-        }
-        if (!requester) {
-            return void callback("", requester);
-        }
-        requester.onreadystatechange = function () {
-            // Roc.alert(XMLHttpRequest);
-            if (requester.readyState == requester.DONE) {
-                callback(requester.responseText, requester);
-            }
+        var requester = new XMLHttpRequest();
+        requester.onload = function () {
+            callback(requester.responseText, requester);
         };
-        requester.open("GET", PuSet.url(url), true);
-        // requester.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+        requester.open("GET", PuSet.URL(url), true);
+        requester.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
         requester.send();
-    };
-
-    PuSet.Callbacks = {};
-
-    PuSet.jsonp = function (obj) {
-
-        return new Promise(function (resolve, reject) {
-
-            let callbackName = "PuSet_" + obj.callback;
-            let removeCallback = function () {
-                delete PuSet.Callbacks[callbackName];
-            };
-            PuSet.Callbacks[callbackName] = function (data) {
-                removeCallback();
-                resolve(data);
-            };
-            DOMEval("", document, {
-                "src": obj.url
-            }).onerror = function (data) {
-                removeCallback();
-                reject(data);
-            };
-        }).then(obj.success);
     };
 
     var
 
-        // Date: 2016-05-20T17:17Z
-        jqueryDefaultURL = PuSet.url("https://code.jquery.com/jquery-1.12.4.min.js"),
+        // Map over PuSet in case of overwrite
+        _PuSet = window.PuSet,
 
-        bindJQueryInterface = function (url, callback) {
+        // Map over the $ in case of overwrite
+        _$ = window.$;
 
-            if ("function" == typeof callback) {
-
-                if (PuSet.fn && PuSet.fn.init) return callback();
-
-                if (!window.jQuery) {
-                    if (bindJQueryInterface.loading) {
-                        return bindJQueryInterface.wait(callback);
-                    }
-
-                    bindJQueryInterface.wait(callback);
-                    bindJQueryInterface.loading = true;
-
-                    var script = document.createElement("script");
-                    script.onerror = script.onload = function (ev) {
-                        if (window.jQuery) {
-                            PuSet.fn = window.jQuery.fn;
-                            if (isFunction(window.jQuery.noConflict)) {
-                                window.jQuery.noConflict();
-                            }
-                            delete window.jQuery;
-                            bindJQueryInterface.then();
-                        } else {
-                            bindJQueryInterface.then(new Error("jQuery object has failed to load."));
-                        }
-                    };
-                    script.src = ("string" == toType(url)) ? PuSet.url(url) : jqueryDefaultURL;
-
-                    document.head.appendChild(script).parentNode.removeChild(script);
-                } else {
-                    callback(void (PuSet.fn = window.jQuery.fn));
-                }
-            } else if ("function" == typeof url) {
-                bindJQueryInterface(null, url);
-            }
-        };
-
-    // 把 PuSet.fn 替换成 jQuery.fn
-    PuSet.bindJQuery = PuSet.extend(bindJQueryInterface, {
-
-        loading: false,
-
-        list: [],
-
-        wait: function (fn) {
-            if ("function" == toType(fn)) {
-                this.list.push(fn);
-            }
-        },
-
-        then: function (errorObject) {
-            var callback, list = this.list;
-            // 
-            PuSet(function () {
-                while (callback = list.shift()) {
-                    try {
-                        callback(errorObject);
-                    } catch (ex) { }
-                }
-            });
+    PuSet.noConflict = function (deep) {
+        if (window.$ === PuSet) {
+            window.$ = _$;
         }
 
-    });
+        if (deep && window.PuSet === PuSet) {
+            window.PuSet = _PuSet;
+        }
 
+        return PuSet;
+    };
 
-
-    if (typeof define === "function" && define.amd) {
-        define("puset", [], function () {
-            return PuSet;
-        });
-    }
-
-    // Expose PuSet and Pu identifiers, even in AMD
-    // (#7102#comment:10, https://github.com/puset/puset/pull/557)
+    // Expose PuSet and $ identifiers, even in AMD
+    // (#7102#comment:10, https://github.com/jquery/jquery/pull/557)
     // and CommonJS for browser emulators (#13566)
-    if (!noGlobal) {
-        window.PuSet = window.Pu = PuSet;
+    if (typeof noGlobal === "undefined") {
+        window.PuSet = window.$ = PuSet;
     }
 
     return PuSet;
+
 });
