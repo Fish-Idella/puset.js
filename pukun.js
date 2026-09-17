@@ -1,24 +1,25 @@
-/**
- * PuSet.js
- * 
+/*!
+ * PuSet JavaScript Library v1.3.0
+ *
  * 本 API 集根据 jQuery 源码精简修改而来，只保留了最基础的 DOM 选择框架 .find() .filter() 以及 .not()
  * 修改的地方使用了 ECMAScript 6.0 标准，可能不支持旧版的浏览器。
  * 如果你需要在你的代码中使用它，请确保你的浏览器支持 ECMAScript 6.0
- * 
- * @authors Pu Kun (pu_kun@sina.com)
- * @date    2021年12月27日 00点33分
- * @version 1.0.0
+ *
+ * Date: 2022年1月4日
  */
-
+;
 (function (global, factory) {
 
+    "use strict";
+
     if (typeof module === "object" && typeof module.exports === "object") {
+
         // For CommonJS and CommonJS-like environments where a proper `window`
         // is present, execute the factory and get PuSet.
         // For environments that do not have a `window` with a `document`
         // (such as Node.js), expose a factory as module.exports.
         // This accentuates the need for the creation of a real `window`.
-        // e.g. var PuSet = require("PuSet")(window);
+        // e.g. var PuSet = require("puset")(window);
         // See ticket #14549 for more info.
         module.exports = global.document ?
             factory(global, true) :
@@ -33,28 +34,23 @@
     }
 
     // Pass this if window is not defined yet
-}(typeof window !== "undefined" ? window : this, function (window, noGlobal) {
+})(typeof window !== "undefined" ? window : this, function (window, noGlobal) {
 
-    // Support: Firefox 18+
-    // Can't be in strict mode, several libs including ASP.NET trace
-    // the stack via arguments.caller.callee and Firefox dies if
-    // you try to trace through "use strict" call chains. (#13335)
-    //"use strict";
+    // Edge <= 12 - 13+, Firefox <=18 - 45+, IE 10 - 11, Safari 5.1 - 9+, iOS 6 - 9.1
+    // throw exceptions when non-strict code (e.g., ASP.NET 4.5) accesses strict mode
+    // arguments.callee.caller (trac-13335). But as of PuSet 3.0 (2016), strict mode should be common
+    // enough that all such attempts are guarded in a try block.
+    "use strict";
+
     var arr = [];
 
     var document = window.document;
 
-    var slice = arr.slice;
+    var getProto = Object.getPrototypeOf;
 
-    var flat = arr.flat ? function (array) {
-        return arr.flat.call(array);
-    } : function (array) {
-        return arr.concat.apply([], array);
-    };
+    var concat = arr.concat;
 
     var push = arr.push;
-
-    var filter = arr.filter;
 
     var indexOf = arr.indexOf;
 
@@ -64,11 +60,72 @@
 
     var hasOwn = class2type.hasOwnProperty;
 
-    var version = "1.0.0",
+    var fnToString = hasOwn.toString;
 
-        // Support: Android<4.1
+    var ObjectFunctionString = fnToString.call(Object);
+
+    var isFunction = function isFunction(obj) {
+
+        // Support: Chrome <=57, Firefox <=52
+        // In some browsers, typeof returns "function" for HTML <object> elements
+        // (i.e., `typeof document.createElement( "object" ) === "function"`).
+        // We don't want to classify *any* DOM node as a function.
+        return typeof obj === "function" && typeof obj.nodeType !== "number";
+    };
+
+
+    var isWindow = function isWindow(obj) {
+        return obj != null && obj === obj.window;
+    };
+
+    var preservedScriptAttributes = {
+        type: true,
+        src: true,
+        noModule: true
+    };
+
+    function DOMEval(code, doc, node) {
+        doc = doc || document;
+
+        var i,
+            script = doc.createElement("script");
+
+        script.text = code;
+        if (node) {
+            for (i in preservedScriptAttributes) {
+                if (node[i]) {
+                    script[i] = node[i];
+                }
+            }
+        }
+        doc.head.appendChild(script).parentNode.removeChild(script);
+        return script;
+    }
+
+
+    function toType(obj) {
+        if (obj == null) {
+            return obj + "";
+        }
+
+        // Support: Android <=2.3 only (functionish RegExp)
+        return typeof obj === "object" || typeof obj === "function" ?
+            class2type[toString.call(obj)] || "object" :
+            typeof obj;
+    }
+    /* global Symbol */
+    // Defining this global in .eslintrc.json would create a danger of using the global
+    // unguarded in another place, it seems safer to define global only for this module
+
+
+
+    var version = "1.3.0",
+
+        // Support: Android <=4.0 only
         // Make sure we trim BOM and NBSP
         rtrim = /^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g,
+
+        rstandardizedAttributeName = /^(((?!\d)[\w\$][\w\$]*)|([1-9]\d*))$/,
 
         // Define a local copy of PuSet
         PuSet = function (selector, context) {
@@ -77,6 +134,7 @@
             // Need init if PuSet is called (just allow error to be thrown if not included)
             return new PuSet.fn.init(selector, context);
         };
+
 
     PuSet.fn = PuSet.prototype = {
 
@@ -171,6 +229,7 @@
         splice: arr.splice
     };
 
+
     PuSet.extend = PuSet.fn.extend = function () {
         var options, name, src, copy, copyIsArray, clone,
             target = arguments[0] || {},
@@ -188,7 +247,7 @@
         }
 
         // Handle case when target is a string or something (possible in deep copy)
-        if (typeof target !== "object" && !PuSet.isFunction(target)) {
+        if (typeof target !== "object" && !isFunction(target)) {
             target = {};
         }
 
@@ -215,11 +274,11 @@
 
                     // Recurse if we're merging plain objects or arrays
                     if (deep && copy && (PuSet.isPlainObject(copy) ||
-                        (copyIsArray = PuSet.isArray(copy)))) {
+                        (copyIsArray = Array.isArray(copy)))) {
 
                         if (copyIsArray) {
                             copyIsArray = false;
-                            clone = src && PuSet.isArray(src) ? src : [];
+                            clone = src && Array.isArray(src) ? src : [];
 
                         } else {
                             clone = src && PuSet.isPlainObject(src) ? src : {};
@@ -242,92 +301,71 @@
 
     PuSet.extend({
 
-        error: function (msg) {
-            throw new Error(msg);
-        },
-
-        isFunction: function (obj) {
-            return PuSet.type(obj) === "function";
-        },
-
-        isArray: Array.isArray || function (obj) {
-            return PuSet.type(obj) == "array";
-        },
-
-        isWindow: function (obj) {
-            return obj != null && obj === obj.window;
-        },
-
-        isNumeric: function (obj) {
-
-            // parseFloat NaNs numeric-cast false positives (null|true|false|"")
-            // ...but misinterprets leading-number strings, particularly hex literals ("0x...")
-            // subtraction forces infinities to NaN
-            // adding 1 corrects loss of precision from parseFloat (#15100)
-            var realStringObj = obj && obj.toString();
-            return !PuSet.isArray(obj) && (realStringObj - parseFloat(realStringObj) + 1) >= 0;
-        },
-
         isPlainObject: function (obj) {
-            var key;
+            var proto, Ctor;
 
-            // Not plain objects:
-            // - Any object or value whose internal [[Class]] property is not "[object Object]"
-            // - DOM nodes
-            // - window
-            if (PuSet.type(obj) !== "object" || obj.nodeType || PuSet.isWindow(obj)) {
+            // Detect obvious negatives
+            // Use toString instead of toType to catch host objects
+            if (!obj || toString.call(obj) !== "[object Object]") {
                 return false;
             }
 
-            // Not own constructor property must be Object
-            if (obj.constructor &&
-                !hasOwn.call(obj, "constructor") &&
-                !hasOwn.call(obj.constructor.prototype || {}, "isPrototypeOf")) {
-                return false;
+            proto = getProto(obj);
+
+            // Objects with no prototype (e.g., `Object.create( null )`) are plain
+            if (!proto) {
+                return true;
             }
 
-            // Own properties are enumerated firstly, so to speed up,
-            // if last one is own, then all properties are own
-            for (key in obj) { }
-
-            return key === undefined || hasOwn.call(obj, key);
+            // Objects with prototype are plain iff they were constructed by a global Object function
+            Ctor = hasOwn.call(proto, "constructor") && proto.constructor;
+            return typeof Ctor === "function" && fnToString.call(Ctor) === ObjectFunctionString;
         },
 
         isEmptyObject: function (obj) {
+
+            /* eslint-disable no-unused-vars */
+            // See https://github.com/eslint/eslint/issues/6125
             var name;
+
             for (name in obj) {
                 return false;
             }
             return true;
         },
 
-        type: function (obj) {
-            if (obj == null) {
-                return obj + "";
-            }
-
-            // Support: Android<4.0, iOS<6 (functionish RegExp)
-            return typeof obj === "object" || typeof obj === "function" ?
-                class2type[toString.call(obj)] || "object" :
-                typeof obj;
+        isXML: function (elem) {
+            var documentElement = elem && (elem.ownerDocument || elem).documentElement;
+            return documentElement ? documentElement.nodeName !== "HTML" : false;
         },
 
-        dir: function (obj) {
-            var type = PuSet.type(obj),
-                result = type + " = {\n \n\t";
-
-            var key, value;
-
-            for (key in obj) {
-                value = obj[key];
-                result += JSON.stringify(key) + ": " + (("string" == typeof value) ? JSON.stringify(value) : value) + ",\n\n\t";
-            }
-
-            return result.replace(/\t/g, "    ");
+        isArray: Array.isArray || function (obj) {
+            return "array" == toType(obj);
         },
 
-        alert: function (obj) {
-            window.alert(PuSet.dir(obj));
+        isFunction: isFunction,
+
+        isWindow: isWindow,
+
+        isNumeric: function (obj) {
+
+            // As of PuSet 3.0, isNumeric is limited to
+            // strings and numbers (primitives or objects)
+            // that can be coerced to finite numbers (gh-2662)
+            var type = toType(obj);
+            return (type === "number" || type === "string") &&
+
+                // parseFloat NaNs numeric-cast false positives ("")
+                // ...but misinterprets leading-number strings, particularly hex literals ("0x...")
+                // subtraction forces infinities to NaN
+                !isNaN(obj - parseFloat(obj));
+        },
+
+        type: toType,
+
+        // Evaluates a script in a global context
+        globalEval: function (code) {
+            DOMEval(code);
         },
 
         each: function (obj, callback) {
@@ -351,11 +389,9 @@
             return obj;
         },
 
-        // Support: Android<4.1
+        // Support: Android <=4.0 only
         trim: function (text) {
-            return text == null ?
-                "" :
-                (text + "").replace(rtrim, "");
+            return text == null ? "" : (text + "").replace(rtrim, "");
         },
 
         // results is for internal usage only
@@ -383,7 +419,6 @@
         // Support: Android <=4.0 only, PhantomJS 1 only
         // push.apply(_, arraylike) throws on ancient WebKit
         merge: function (first, second) {
-            // console.log(second);
             var len = +second.length,
                 j = 0,
                 i = first.length;
@@ -445,10 +480,57 @@
             }
 
             // Flatten any nested arrays
-            return flat(ret);
+            return concat.apply([], ret);
         },
 
-        // A global GUID counter for objects
+        substr: function (str, start, end) {
+            str = "" + str;
+            start = PuSet.isNumeric(start) ? start : 0;
+            end = PuSet.isNumeric(end) ? end : str.length - start;
+            if (end < 0) {
+                end += str.length;
+            }
+            return str.substr(start).substr(0, end);
+        },
+
+        dir: function (obj, elem) {
+
+            var ret = null === obj ? "null" : typeof obj;
+
+            if ("object" != ret && "function" != ret) {
+                return ret + " is primitive type.";
+            }
+
+            var key, value, type;
+
+            ret = [toType(obj), " = {", "\n\n\t"];
+
+            for (key in obj) {
+                try {
+                    value = obj[key];
+                } catch (ex) {
+                    value = "[object UnknownObject]";
+                }
+                type = toType(value);
+                ret.push(rstandardizedAttributeName.test(key) ? key : JSON.stringify(key), ": ",
+                    ("string" == typeof value ? JSON.stringify(value) :
+                        "array" == type ? "[object Array]" :
+                            "function" == type ? ObjectFunctionString.replace("Object", key) : "" + value));
+                ret.push(",\n\n\t");
+            }
+            ret.pop();
+            ret.push("\n\n}");
+            ret = ret.join("");
+
+
+            if (elem && (elem.innerText = ret));
+            return ret;
+        },
+
+        alert: function (obj) {
+            window.alert(this.dir(obj));
+        },
+
         guid: 1
 
     });
@@ -459,14 +541,52 @@
             class2type["[object " + name + "]"] = name.toLowerCase();
         });
 
+    function isArrayLike(obj) {
 
-    var zeptoMatches = function (element, selector) {
-        if (!selector || !element || element.nodeType !== 1) return false;
-        var matchesSelector = element.matches || element.webkitMatchesSelector ||
-            element.mozMatchesSelector || element.oMatchesSelector ||
-            element.matchesSelector;
-        if (matchesSelector) return matchesSelector.call(element, selector);
-    };
+        // Support: real iOS 8.2 only (not reproducible in simulator)
+        // `in` check used to prevent JIT error (gh-2145)
+        // hasOwn isn't used here due to false negatives
+        // regarding Nodelist length in IE
+        var length = !!obj && "length" in obj && obj.length,
+            type = toType(obj);
+
+        if (isFunction(obj) || isWindow(obj)) {
+            return false;
+        }
+
+        return type === "array" || length === 0 ||
+            typeof length === "number" && length > 0 && (length - 1) in obj;
+    }
+
+
+
+    // var zeptoMatches = function (element, selector) {
+    // 	if (!selector || !element || element.nodeType !== 1) return false;
+    // 	var matchesSelector = element.matches || element.webkitMatchesSelector ||
+    // 		element.mozMatchesSelector || element.oMatchesSelector ||
+    // 		element.matchesSelector;
+    // 	if (matchesSelector) return matchesSelector.call(element, selector);
+    // };
+
+    if (!Element.prototype.matches) {
+        let fnElementMatches =
+            Element.prototype.matchesSelector ||
+            Element.prototype.mozMatchesSelector ||
+            Element.prototype.msMatchesSelector ||
+            Element.prototype.oMatchesSelector ||
+            Element.prototype.webkitMatchesSelector;
+
+        if (!isFunction(fnElementMatches)) {
+            fnElementMatches = function (s) {
+                var matches = (this.document || this.ownerDocument).querySelectorAll(s),
+                    i = matches.length;
+                while (--i >= 0 && matches.item(i) !== this) { }
+                return i > -1;
+            };
+        }
+
+        Element.prototype.matches = fnElementMatches;
+    }
 
     PuSet.fn.extend({
         find: function (selector) {
@@ -480,11 +600,11 @@
         },
         filter: function (selector) {
             if (selector && "string" === typeof selector) {
-                return this.constructor(filter.call(this, function (element) {
-                    return zeptoMatches(element, selector);
+                return this.pushStack(PuSet.grep(this, function (element) {
+                    return element.matches(selector);
                 }));
             }
-            return this.pushStack();
+            return this.pushStack([]);
         },
         not: function (selector) {
             if (!selector) {
@@ -540,7 +660,7 @@
 
                 // HANDLE: $(function)
                 // Shortcut for document ready
-            } else if (PuSet.isFunction(selector)) {
+            } else if (isFunction(selector)) {
                 return root.ready !== undefined ?
                     root.ready(selector) :
 
@@ -562,123 +682,225 @@
     // Initialize central reference
     rootPuSet = PuSet(document);
 
-    function isArrayLike(obj) {
 
-        // Support: iOS 8.2 (not reproducible in simulator)
-        // `in` check used to prevent JIT error (gh-2145)
-        // hasOwn isn't used here due to false negatives
-        // regarding Nodelist length in IE
-        var length = !!obj && "length" in obj && obj.length,
-            type = PuSet.type(obj);
+    /*
+     * DOMParser HTML extension
+     * 2012-09-04
+     * 
+     * By Eli Grey, http://eligrey.com
+     * Public domain.
+     * NO WARRANTY EXPRESSED OR IMPLIED. USE AT YOUR OWN RISK.
+     */
 
-        if (type === "function" || PuSet.isWindow(obj)) {
-            return false;
+    /*! @source https://gist.github.com/1129031 */
+    /*global document, DOMParser*/
+
+    (function (DOMParser) {
+        "use strict";
+
+        if ("function" != typeof DOMParser) {
+            return null;
         }
 
-        return type === "array" || length === 0 ||
-            typeof length === "number" && length > 0 && (length - 1) in obj;
-    }
+        var proto = DOMParser.prototype,
+            nativeParse = proto.parseFromString;
+
+        // Firefox/Opera/IE throw errors on unsupported types
+        try {
+            // WebKit returns null on unsupported types
+            if ((new DOMParser()).parseFromString("", "text/html")) {
+                // text/html parsing is natively supported
+                return DOMParser;
+            }
+        } catch (ex) { }
+
+        proto.parseFromString = function (markup, type) {
+            if (/^\s*text\/html\s*(?:;|$)/i.test(type)) {
+                var doc = document.implementation.createHTMLDocument("");
+                if (markup.toLowerCase().indexOf('<!doctype') > -1) {
+                    doc.documentElement.innerHTML = markup;
+                } else {
+                    doc.body.innerHTML = markup;
+                }
+                return doc;
+            } else {
+                return nativeParse.apply(this, arguments);
+            }
+        };
+        return DOMParser;
+    }(DOMParser));
+
+    PuSet.each({
+        "XML": "application/xml",
+        "SVG": "image/svg+xml",
+        "HTML": "text/html"
+    }, function (name, value) {
+        PuSet["parse" + name] = function (data) {
+            var obj, tmp;
+            if (!data || "string" != typeof data) {
+                return null;
+            }
+            if (window.ActiveXObject) {
+                obj = new ActiveXObject("Microsoft.XMLDOM");
+                obj.loadXML(data);
+            } else {
+                try {
+                    tmp = new DOMParser();
+                    obj = tmp.parseFromString(data, value);
+                } catch (e) {
+                    obj = null;
+                }
+            }
+            if (!obj || obj.getElementsByTagName("parsererror").length) {
+                throw new Error("is not invalid " + name);
+            }
+            return obj;
+        };
+    });
 
 
+    /*! URL解析 未完成
+     *  var rurl = new RegExp(
+     *			"^(([^\\/]+\\:)?" +
+     *			"(?:\\/\\/(([^\\/]+?)(?:\\:([^\\/\\:]+))?|))?(?=\/))?" +
+     *			"((?:\\.*\\/)?[^\\?\\#]+)" +
+     *			"(\\?[^\\#]+)?(\\#.*)?$",
+     *			"i");
+     */
+    PuSet.url = function (url, base) {
+        return (new (window.URL || window.webkitURL)(url, base || window.location.href));
+    };
 
-
-
-
-
-
-    PuSet.isArrayLike = isArrayLike;
-
-    // [原始回调函数集合, ]
-    const delegateEventLists = [[], {}];
-
-    function bindEvent(elements, types, callback) {
-        if (!isArrayLike(elements)) {
-            elements = [elements];
+    PuSet.get = function (url, callback) {
+        var requester = null;
+        if (window.XMLHttpRequest) {
+            // code for IE7+, Firefox, Chrome, Opera, Safari
+            requester = new XMLHttpRequest();
+        } else {
+            // code for IE6, IE5
+            requester = new ActiveXObject("Microsoft.XMLHTTP");
         }
-        types = ('' + types).replace(/$\s+|\s+^/g, '').replace(/\s+/g, ' ').split(' ');
-        elements.forEach(element => types.forEach(type => {
-            if (element && ("function" === typeof element.addEventListener) && element.addEventListener(type, callback, false));
-        }));
-    }
-
-    function unbindEvent(elements, types, callback) {
-        if (!isArrayLike(elements)) {
-            elements = [elements];
+        if (!requester) {
+            return void callback("", requester);
         }
-        types = ('' + types).replace(/$\s+|\s+^/g, '').replace(/\s+/g, ' ').split(' ');
-        elements.forEach(element => types.forEach(type => {
-            if (element && ("function" === typeof element.removeEventListener) && element.removeEventListener(type, callback, false));
-        }));
-    }
+        requester.onreadystatechange = function () {
+            // Roc.alert(XMLHttpRequest);
+            if (requester.readyState == requester.DONE) {
+                callback(requester.responseText, requester);
+            }
+        };
+        requester.open("GET", PuSet.url(url), true);
+        // requester.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+        requester.send();
+    };
 
-    function delegateEvent(elements, types, childrenSelector, callback) {
-        const i = delegateEventLists[0].push(callback) - 1;
-        let arr = delegateEventLists[1][childrenSelector];
-        if (!Array.isArray(arr)) arr = (delegateEventLists[1][childrenSelector] = []);
-        bindEvent(elements, types, (arr[i] = function (ev) {
-            const target = ev.target || ev.srcElement;
-            const children = this.querySelectorAll(childrenSelector);
-            if (inArray(target, children) >= 0) callback.call(target, ev);
-        }));
-    }
+    PuSet.Callbacks = {};
 
-    function undelegateEvent(elements, types, childrenSelector, callback) {
-        let arr = delegateEventLists[1][childrenSelector];
-        if (Array.isArray(arr)) {
-            const i = inArray(callback, delegateEventLists[0]);
-            if (i >= 0) unbindEvent(elements, types, arr[i]);
-        }
-    }
+    PuSet.jsonp = function (obj) {
 
-    PuSet.fn.extend({
-        on: function( types, selector, fn ) {
+        return new Promise(function (resolve, reject) {
+
+            let callbackName = "PuSet_" + obj.callback;
+            let removeCallback = function () {
+                delete PuSet.Callbacks[callbackName];
+            };
+            PuSet.Callbacks[callbackName] = function (data) {
+                removeCallback();
+                resolve(data);
+            };
+            DOMEval("", document, {
+                "src": obj.url
+            }).onerror = function (data) {
+                removeCallback();
+                reject(data);
+            };
+        }).then(obj.success);
+    };
+
+    var
+
+        // Date: 2016-05-20T17:17Z
+        jqueryDefaultURL = PuSet.url("https://code.jquery.com/jquery-1.12.4.min.js"),
+
+        bindJQueryInterface = function (url, callback) {
+
+            if ("function" == typeof callback) {
+
+                if (PuSet.fn && PuSet.fn.init) return callback();
+
+                if (!window.jQuery) {
+                    if (bindJQueryInterface.loading) {
+                        return bindJQueryInterface.wait(callback);
+                    }
+
+                    bindJQueryInterface.wait(callback);
+                    bindJQueryInterface.loading = true;
+
+                    var script = document.createElement("script");
+                    script.onerror = script.onload = function (ev) {
+                        if (window.jQuery) {
+                            PuSet.fn = window.jQuery.fn;
+                            if (isFunction(window.jQuery.noConflict)) {
+                                window.jQuery.noConflict();
+                            }
+                            delete window.jQuery;
+                            bindJQueryInterface.then();
+                        } else {
+                            bindJQueryInterface.then(new Error("jQuery object has failed to load."));
+                        }
+                    };
+                    script.src = ("string" == toType(url)) ? PuSet.url(url) : jqueryDefaultURL;
+
+                    document.head.appendChild(script).parentNode.removeChild(script);
+                } else {
+                    callback(void (PuSet.fn = window.jQuery.fn));
+                }
+            } else if ("function" == typeof url) {
+                bindJQueryInterface(null, url);
+            }
+        };
+
+    // 把 PuSet.fn 替换成 jQuery.fn
+    PuSet.bindJQuery = PuSet.extend(bindJQueryInterface, {
+
+        loading: false,
+
+        list: [],
+
+        wait: function (fn) {
+            if ("function" == toType(fn)) {
+                this.list.push(fn);
+            }
         },
-        one: function( types, selector, fn ) {},
-        off: function( types, selector, fn ) {}
+
+        then: function (errorObject) {
+            var callback, list = this.list;
+            // 
+            PuSet(function () {
+                while (callback = list.shift()) {
+                    try {
+                        callback(errorObject);
+                    } catch (ex) { }
+                }
+            });
+        }
+
     });
 
 
 
-
-
-
-
-
-
-
-    function s(ss) {
-        "http://suggestion.baidu.com/su?wd=%E5%95%86%E5%BA%97&cb=PuSet1124015850773101397242_1616170775575&_=1616170775581"
-
-        "http://m.baidu.com/su?ie=utf-8&from=wise_web&json=1&net=1&os=1&callback=bdwpcheck&wd=%E9%AC%BC%E8%B0%B7%E5%85%AB%E8%8D%92&cb=PuSet1124013929303793124248_1616171037647&_=1616171037651"
+    if (typeof define === "function" && define.amd) {
+        define("puset", [], function () {
+            return PuSet;
+        });
     }
 
-    var
-
-        // Map over PuSet in case of overwrite
-        _PuSet = window.PuSet,
-
-        // Map over the $ in case of overwrite
-        _Pu = window.Pu;
-
-    PuSet.noConflict = function (deep) {
-        if (window.Pu === PuSet) {
-            window.Pu = _Pu;
-        }
-
-        if (deep && window.PuSet === PuSet) {
-            window.PuSet = _PuSet;
-        }
-
-        return PuSet;
-    };
-
-    // Expose PuSet and $ identifiers, even in AMD
-    // (#7102#comment:10, https://github.com/PuSet/PuSet/pull/557)
+    // Expose PuSet and Pu identifiers, even in AMD
+    // (#7102#comment:10, https://github.com/puset/puset/pull/557)
     // and CommonJS for browser emulators (#13566)
     if (!noGlobal) {
         window.PuSet = window.Pu = PuSet;
     }
 
     return PuSet;
-
-}));
+});
