@@ -1,1417 +1,1614 @@
-/**
- * 𝙿𝚞𝚂𝚎𝚝 JavaScript Library v2.1.2
- * 一款侧重移动端Touch事件的Javascript库
- *
- * 本 API 集根据 jQuery 源码精简修改而来，只保留了最基础的 DOM 选择框架 .find() .filter() 以及 .not()
- * 修改的地方使用了 ECMAScript 6.0 标准，可能不支持旧版的浏览器。
- * 如果你需要在你的代码中使用它，请确保你的浏览器支持 ECMAScript 6.0
- * 
- * ！！！ 选择器语法遵循 element.querySelectorAll() 规则，与 jQuery 的选择器语法规则不同，不可完全平替
- *
- * Date: 2024年09月20日
- */
-(function (global, factory) {
+const PuSet = (function () {
+    "use strict"; // 启用严格模式，避免隐式错误
 
-    "use strict";
-
-    if (typeof module === 'object' && typeof module.exports === 'object') {
-
-        // For CommonJS and CommonJS-like environments where a proper `window`
-        // is present, execute the factory and get PuSet.
-        // For environments that do not have a `window` with a `document`
-        // (such as Node.js), expose a factory as module.exports.
-        // This accentuates the need for the creation of a real `window`.
-        // e.g. let PuSet = require("puset")(window);
-        // See ticket #14549 for more info.
-        module.exports = global.document ?
-            factory(global, true) :
-            function (w) {
-                if (!w.document) {
-                    throw new Error("PuSet requires a window with a document");
-                }
-                return factory(w);
-            };
-    } else {
-        return factory(global);
+    if (!(window && window.window === window && window.document)) {
+        throw new Error("PuSet 运行环境异常，只能用在现代化浏览器环境");
     }
 
-    // Pass this if window is not defined yet
-})(typeof window !== "undefined" ? window : this, function (/** @type {Window & typeof globalThis} */ window, noGlobal) {
+    // ===================== 基础常量定义 =====================
+    const NS_HTML = "http://www.w3.org/1999/xhtml";
 
-    "use strict";
+    const version = "2026.04.15.20";
+    const main_document = window.document; // 缓存document对象，减少全局查找
+    const HIDE_ATTRIBUTE = "v-hide"; // 隐藏元素的自定义属性名
+    const LENGTH_PROPERTY = "length"; // 缓存length字符串，减少字面量创建
 
-    const TYPE_FUNCTION = 'function';
-    const TYPE_OBJECT = 'object';
+    // 注入隐藏元素的全局样式（确保只注入一次）
+    if (main_document.querySelector("head>style.v-hide") === null) {
+        const styleElement = main_document.createElementNS(NS_HTML, "style");
+        styleElement.className = HIDE_ATTRIBUTE;
+        // 隐藏规则：.hide类 或 带v-hide属性的元素强制隐藏
+        styleElement.innerHTML = `.hide,[${HIDE_ATTRIBUTE}]{display:none!important}`;
+        main_document.head.appendChild(styleElement)
+    }
 
-    const arr = [];
+    // ===================== 原生方法缓存（性能优化） =====================
 
-    /** @type {Document} */
-    const document = window.document;
+    // 工具函数引用缓存
+    const ARRAY_PROTO = Array.prototype;
+    const OBJECT_PROTO = Object.prototype;
 
-    const getProto = Object.getPrototypeOf;
+    const indexOf = ARRAY_PROTO.indexOf;
+    const sort = ARRAY_PROTO.sort;
+    const splice = ARRAY_PROTO.splice;
+    const includes = ARRAY_PROTO.includes || function includes(value, fromIndex) {
+        return this && indexOf.call(this, value, fromIndex) !== -1;
+    };
+    const push = ARRAY_PROTO.push;
+    const slice = ARRAY_PROTO.slice;
+    const getProto = Object.getPrototypeOf; // 获取对象原型
+    const hasOwn = OBJECT_PROTO.hasOwnProperty; // 判断自有属性
+    const toString = OBJECT_PROTO.toString;
+    const fnToString = hasOwn.toString; // 函数toString方法（用于判断原生构造函数）
 
-    const slice = arr.slice;
+    const ObjectFunctionString = fnToString.call(Object); // Object构造函数的字符串特征
+    const rhtmlSuffix = /HTML$/i; // 匹配HTML后缀的正则（用于判断XML文档）
 
-    const concat = arr.concat;
+    // 通用返回函数（减少函数创建开销）
+    const returnTrue = function returnTrue() { return true };
+    const returnFalse = function returnFalse() { return false };
 
-    const push = arr.push;
+    // ===================== 类型判断核心常量 =====================
+    /**
+     * 类型映射常量 - 统一类型判断的返回值格式
+     * 支持的类型：Boolean/Number/String/Function/Array/Date/RegExp/Object/Error/Symbol/BigInt/Map/Promise/Set
+     * 两种访问方式：
+     * - TYPES.Function → "function"
+     * - TYPES["[object Function]"] → "function"
+     */
+    const TYPES = "Boolean Number String Function Array Date RegExp Object Error Symbol BigInt Map Promise Set".split(" ")
+        .reduce((obj, value) => (obj[`[object ${value}]`] = obj[value] = value.toLowerCase(), obj), {});
 
-    const indexOf = arr.indexOf;
-
-    const class2type = {};
-
-    const toString = class2type.toString;
-
-    const hasOwn = class2type.hasOwnProperty;
-
-    const fnToString = hasOwn.toString;
-
-    const ObjectFunctionString = fnToString.call(Object);
-
+    // ===================== 核心类型判断工具函数 =====================
+    /**
+     * 判断是否为函数（排除DOM节点的特殊"函数"属性）
+     * @param {*} obj - 待检测对象
+     * @returns {obj is Function} 是否为有效函数
+     */
     const isFunction = function isFunction(obj) {
-
-        // Support: Chrome <=57, Firefox <=52
-        // In some browsers, typeof returns TYPE_FUNCTION for HTML <object> elements
-        // (i.e., `typeof document.createElement( "object" ) === TYPE_FUNCTION`).
-        // We don't want to classify *any* DOM node as a function.
-        return typeof obj === TYPE_FUNCTION && typeof obj.nodeType !== "number";
+        return TYPES.Function === typeof obj &&
+            TYPES.Number !== typeof obj.nodeType && // 排除DOM节点（如element.nodeType是数字）
+            TYPES.Function !== typeof obj.item; // 排除类数组对象的item方法
     };
 
+    /**
+     * 判断是否为window对象
+     * @param {*} obj - 待检测对象
+     * @returns {boolean} 是否为window对象
+     */
     const isWindow = function isWindow(obj) {
         return obj != null && obj === obj.window;
     };
 
-    function toType(obj) {
-        if (obj == null) {
-            return obj + "";
-        }
-
-        // Support: Android <=2.3 only (functionish RegExp)
-        return typeof obj === TYPE_OBJECT || typeof obj === TYPE_FUNCTION ?
-            class2type[toString.call(obj)] || TYPE_OBJECT :
-            typeof obj;
-    }
-
     /**
-     * 创建类
-     * @param {{constructor:Function}} obj 包含构造器 constructor 的对象原型
-     * @param {object} props 公共方法
-     * 
-     * @returns {obj.constructor}
+     * 获取对象的精准类型（比typeof更准确）
+     * @param {*} test - 待检测对象
+     * @returns {string} 小写的类型名（如"array"/"function"/"object"）
      */
-    function createClass(obj, props) {
-        const fn = obj.constructor;
-        if ("function" === typeof fn) {
-            fn.prototype = obj;
-            Object.assign(fn, props);
+    const toType = function toType(test) {
+        // 不能使用 !test , 避免 !false 返回 'false'
+        if (null == test) return String(test); // null/undefined直接返回字符串
+
+        const type = typeof test;
+        // 对于对象/函数类型，使用OBJECT_PROTO.toString做精准判断
+        if (type === TYPES.Object || type === TYPES.Function) {
+            const key = toString.call(test);
+            return Object.hasOwn(TYPES, key) ? TYPES[key] : TYPES.Object;
         }
-        return fn;
-    }
-
-    /**
-     * convert array-like objects to real arrays
-     * @param {Object} obj
-     * @returns {Array}
-     */
-    function toArray(obj) {
-        return slice.call(obj, 0);
-    }
-
-    const
-
-        rstandardizedAttributeName = /^(?:0|[1-9]\d*|(?![0-9])[$\w]+)$/,
-
-        version = "2.1.1",
-
-        PuSet = createClass({
-
-            puset: version,
-
-            // Define a local copy of PuSet
-            constructor: function PuSet(selector, context) {
-
-                // The PuSet object is actually just the init constructor 'enhanced'
-                // Need init if PuSet is called (just allow error to be thrown if not included)
-                return new PuSet.fn.init(selector, context);
-            },
-
-            length: 0,
-
-            toArray: function () {
-                return toArray(this);
-            },
-
-            // Get the Nth element in the matched element set OR
-            // Get the whole matched element set as a clean array
-            get: function (num) {
-
-                // Return all the elements in a clean array
-                if (num == null) {
-                    return toArray(this);
-                }
-
-                // Return just the one element from the set
-                return num < 0 ? this[num + this.length] : this[num];
-            },
-
-            // Take an array of elements and push it onto the stack
-            // (returning the new matched element set)
-            pushStack: function (elems) {
-
-                // Build a new PuSet matched element set
-                const ret = PuSet.merge(this.constructor(), elems);
-
-                // Add the old object onto the stack (as a reference)
-                ret.prevObject = this;
-
-                // Return the newly-formed element set
-                return ret;
-            },
-
-            // Execute a callback for every element in the matched set.
-            each: function (callback) {
-                return PuSet.each(this, callback);
-            },
-
-            map: function (callback) {
-                return this.pushStack(PuSet.map(this, function (elem, i) {
-                    return callback.call(elem, i, elem);
-                }));
-            },
-
-            slice: function () {
-                return this.pushStack(slice.apply(this, arguments));
-            },
-
-            first: function () {
-                return this.eq(0);
-            },
-
-            last: function () {
-                return this.eq(-1);
-            },
-
-            even: function () {
-                return this.pushStack(PuSet.grep(this, function (_elem, i) {
-                    return (i + 1) % 2;
-                }));
-            },
-
-            odd: function () {
-                return this.pushStack(PuSet.grep(this, function (_elem, i) {
-                    return i % 2;
-                }));
-            },
-
-            eq: function (i) {
-                const len = this.length, j = +i + (i < 0 ? len : 0);
-                return this.pushStack(j >= 0 && j < len ? [this[j]] : []);
-            },
-
-            end: function () {
-                return this.prevObject || this.constructor();
-            },
-
-            addClass: function (className) {
-                const arr = ("" + className).trim().split(" ");
-                return this.each(elem => PuSet.addClass(elem, arr));
-            },
-
-            removeClass: function (className) {
-                const arr = ("" + className).trim().split(" ");
-                return this.each(elem => PuSet.removeClass(elem, arr));
-            },
-
-            // For internal use only.
-            // Behaves like an Array's method, not like a PuSet method.
-            push: push,
-            sort: arr.sort,
-            splice: arr.splice,
-            indexOf: indexOf
-
-        }, {
-
-            // Unique for each copy of PuSet on the page
-            expando: "PuSet" + (version + Math.random()).replace(/\D/g, ""),
-
-            // Assume PuSet is ready without the ready module
-            isReady: true,
-
-            createClass: createClass,
-
-            addClass: function (elem, className) {
-                PuSet.each((PuSet.isArray(className) ? className : ("" + className).trim().split(" ")), name => elem.classList.add(name));
-                return elem;
-            },
-
-            removeClass: function (elem, className) {
-                PuSet.each((PuSet.isArray(className) ? className : ("" + className).trim().split(" ")), name => elem.classList.remove(name));
-                return elem;
-            },
-
-            error: function (msg) {
-                throw new Error(msg);
-            },
-
-            noop: function () { },
-
-            isPlainObject: function (obj) {
-                let proto, Ctor;
-
-                // Detect obvious negatives
-                // Use toString instead of toType to catch host objects
-                if (!obj || toString.call(obj) !== "[object Object]") {
-                    return false;
-                }
-
-                proto = getProto(obj);
-
-                // Objects with no prototype (e.g., `Object.create( null )`) are plain
-                if (!proto) {
-                    return true;
-                }
-
-                // Objects with prototype are plain iff they were constructed by a global Object function
-                Ctor = hasOwn.call(proto, "constructor") && proto.constructor;
-                return typeof Ctor === TYPE_FUNCTION && fnToString.call(Ctor) === ObjectFunctionString;
-            },
-
-            isEmptyObject: function (obj) {
-
-                /* eslint-disable no-unused-vars */
-                // See https://github.com/eslint/eslint/issues/6125
-
-                for (let key in obj) {
-                    return false;
-                }
-                return true;
-            },
-
-            isXML: function (elem) {
-                const documentElement = elem && (elem.ownerDocument || elem).documentElement;
-                return documentElement ? documentElement.nodeName !== "HTML" : false;
-            },
-
-            isArray: Array.isArray || function (arg) {
-                return "array" == toType(arg);
-            },
-
-            isFunction: isFunction,
-
-            isWindow: isWindow,
-
-            isNumeric: function (obj) {
-
-                // As of PuSet 3.0, isNumeric is limited to
-                // strings and numbers (primitives or objects)
-                // that can be coerced to finite numbers (gh-2662)
-                const type = toType(obj);
-                return (type === "number" || type === "string") &&
-
-                    // parseFloat NaNs numeric-cast false positives ("")
-                    // ...but misinterprets leading-number strings, particularly hex literals ("0x...")
-                    // subtraction forces infinities to NaN
-                    !isNaN(obj - parseFloat(obj));
-            },
-
-            type: toType,
-
-            each: function (obj, callback) {
-                let length, i = 0;
-
-                if (isArrayLike(obj)) {
-                    for (length = obj.length; i < length; i++) {
-                        if (callback(obj[i], i) === false) {
-                            break;
-                        }
-                    }
-                } else {
-                    for (i in obj) {
-                        if (callback(obj[i], i) === false) {
-                            break;
-                        }
-                    }
-                }
-
-                return obj;
-            },
-
-            // results is for internal usage only
-            makeArray: function (arr, results) {
-                let ret = results || [];
-
-                if (arr != null) {
-                    if (isArrayLike(Object(arr))) {
-                        PuSet.merge(ret,
-                            typeof arr === "string" ?
-                                [arr] : arr
-                        );
-                    } else {
-                        push.call(ret, arr);
-                    }
-                }
-
-                return ret;
-            },
-
-            inArray: function (elem, arr, i) {
-                return arr == null ? -1 : indexOf.call(arr, elem, i);
-            },
-
-            /**
-             * 追加属性：将 src 中的属性添加到 dest，如果 dest 存在同名属性则跳过
-             * @param {object} dest 
-             * @param {object} src 
-             */
-            append: function (dest, src) {
-                // for (let key in src)
-                PuSet.each(Object.keys(src), function (key) {
-                    if (dest[key] === undefined) {
-                        dest[key] = src[key];
-                    }
-                });
-                return dest;
-            },
-
-            /**
-             * 将第二个数组中的值添加到第一个数组中，并返回第一个数组。
-             * 
-             * ES6: first.push(...second);
-             * 
-             * Support: Android <=4.0 only, PhantomJS 1 only
-             * push.apply(_, arraylike) throws on ancient WebKit
-             * 
-             * @param {*} first 
-             * @param {*} second 
-             * @returns 
-             */
-            merge: function (first, second) {
-                let len = +second.length,
-                    j = 0,
-                    i = first.length;
-
-                for (; j < len; j++) {
-                    first[i++] = second[j];
-                }
-
-                first.length = i;
-
-                return first;
-            },
-
-            /**
-             * 使用指定的函数过滤数组中的元素，并返回过滤后的数组。
-             * 
-             * Array.filter
-             * 
-             * @param {Array} elems 
-             * @param {Function} callback 
-             * @param {Boolean} invert 
-             * @returns 
-             */
-            grep: function (elems, callback, invert) {
-                let callbackInverse,
-                    matches = [],
-                    i = 0,
-                    length = elems.length,
-                    callbackExpect = !invert;
-
-                // Go through the array, only saving the items
-                // that pass the validator function
-                for (; i < length; i++) {
-                    callbackInverse = !callback(elems[i], i);
-                    if (callbackInverse !== callbackExpect) {
-                        matches.push(elems[i]);
-                    }
-                }
-
-                return matches;
-            },
-
-            /**
-             * 使用指定函数处理数组中的每个元素(或对象的每个属性)，并将处理结果封装为新的数组返回。
-             * 
-             * @param {Any} elems 需要处理的元素
-             * @param {Function} callback 
-             * @param {Any} arg 给 callback 传入的额外参数
-             * @returns {Any[]} 数组
-             */
-            map: function (elems, callback, arg) {
-                let length, value,
-                    i = 0,
-                    ret = [];
-
-                // Go through the array, translating each of the items to their new values
-                if (isArrayLike(elems)) {
-                    length = elems.length;
-                    for (; i < length; i++) {
-                        value = callback(elems[i], i, arg);
-
-                        if (value != null) {
-                            ret.push(value);
-                        }
-                    }
-
-                    // Go through every key on the object,
-                } else {
-                    for (i in elems) {
-                        value = callback(elems[i], i, arg);
-
-                        if (value != null) {
-                            ret.push(value);
-                        }
-                    }
-                }
-
-                // 展平任何嵌套数组 
-                return concat.apply([], ret);
-            },
-
-            dir: function (obj, elem) {
-
-                let type = null === obj ? "null" : typeof obj;
-
-                if (TYPE_OBJECT != type && TYPE_FUNCTION != type) {
-                    return type + " is primitive type.";
-                }
-
-                let key, value, ret = [toType(obj), " = {", "\n\n\t"];
-
-                for (key in obj) {
-                    try {
-                        value = obj[key];
-                    } catch (ex) {
-                        value = "[object UnknownObject]";
-                    } finally {
-                        type = toType(value);
-                        ret.push(rstandardizedAttributeName.test(key) ? key : JSON.stringify(key), ": ",
-                            ("string" == typeof value ? JSON.stringify(value)
-                                : "array" == type ? "[object Array]"
-                                    : TYPE_FUNCTION == type ? ObjectFunctionString.replace("Object", key)
-                                        : "" + value)
-                            , ",\n\n\t");
-                    }
-                }
-                ret.splice(-1, 1, "\n\n}");
-
-                return (elem || {}).innerText = ret.join("");
-            },
-
-            alert: function (obj) {
-                window.alert(this.dir(obj, false));
-            },
-
-            /**
-             * 下载单个文件
-             * @param {string|blob} url 文件数据
-             * @param {string} filename 文件名
-             */
-            download: function (url, filename = "filename") {
-                const save_link = document.createElementNS("http://www.w3.org/1999/xhtml", "a");
-                save_link.href = url;
-                save_link.download = filename;
-                save_link.dispatchEvent(new MouseEvent('click', {
-                    'view': window,
-                    'bubbles': true,
-                    'cancelable': true
-                }));
-            },
-
-            /**
-             * ES2017+
-             * @param {String} base64 data URL
-             */
-            base64ToBlob: function base64ToBlob(base64) {
-                // 1. 严格参数校验：确保输入是有效非空字符串
-                if (typeof base64 !== 'string' || base64.trim() === '') {
-                    console.warn('base64ToBlob: 输入必须是非空字符串');
-                    return null;
-                }
-
-                try {
-                    // 2. 提取正则表达式为常量，提升可维护性
-                    // 输出示例：data:text/plain;base64,aGVsbG8gd29ybGQ=
-                    const dataUrlPattern = /^data:([\w\/]+?);base64,(.+)$/;
-                    // 匹配base64数据URL格式（MIME类型 + 编码内容）
-                    const matchResult = base64.match(dataUrlPattern);
-
-                    // 3. 严谨校验匹配结果，确保格式完整
-                    if (matchResult === null || matchResult.length < 3) {
-                        console.warn('base64ToBlob: 输入不是有效的base64数据URL格式');
-                        return null;
-                    }
-
-                    // 4. 解构赋值，提升代码可读性
-                    const [, mimeType, base64Data] = matchResult;
-
-                    // 5. 性能优化：简化Uint8Array转换逻辑（减少冗余数组操作）
-                    const decodedStr = atob(base64Data); // 解码base64字符串
-                    const byteLength = decodedStr.length;
-                    const uint8Array = new Uint8Array(byteLength);
-
-                    // 直接遍历字符串赋值，替代 Array.from + map 的冗余转换
-                    for (let i = 0; i < byteLength; i++) {
-                        uint8Array[i] = decodedStr.charCodeAt(i);
-                    }
-
-                    // 6. 创建并返回Blob对象
-                    return new Blob([uint8Array], { type: mimeType });
-                } catch (error) {
-                    // 7. 全局异常捕获，避免程序崩溃
-                    console.error('base64ToBlob 转换失败:', error);
-                    return null;
-                }
-            }
-
-        });
-
-    /**
-     *  $.extend( [deep ], target, object1 [, objectN ] )
-     * @param {boolean} [deep] 深度复制
-     */
-    PuSet.extend = (PuSet.fn = PuSet.prototype).extend = function () {
-        let options, name, src, copy, copyIsArray, clone,
-            target = arguments[0] || {},
-            i = 1,
-            length = arguments.length,
-            deep = false;
-
-        // Handle a deep copy situation
-        if (typeof target === "boolean") {
-            deep = target;
-
-            // Skip the boolean and the target
-            target = arguments[i] || {};
-            i++;
-        }
-
-        // Handle case when target is a string or something (possible in deep copy)
-        if (typeof target !== TYPE_OBJECT && !isFunction(target)) {
-            target = {};
-        }
-
-        // Extend PuSet itself if only one argument is passed
-        if (i === length) {
-            target = this;
-            i--;
-        }
-
-        for (; i < length; i++) {
-
-            // Only deal with non-null/undefined values
-            if ((options = arguments[i]) != null) {
-
-                // Extend the base object
-                for (name in options) {
-                    copy = options[name];
-
-                    // Prevent Object.prototype pollution
-                    // Prevent never-ending loop
-                    if (name === "__proto__" || target === copy) {
-                        continue;
-                    }
-
-                    // Recurse if we're merging plain objects or arrays
-                    if (deep && copy && (PuSet.isPlainObject(copy) ||
-                        (copyIsArray = Array.isArray(copy)))) {
-                        src = target[name];
-
-                        // Ensure proper type for the source value
-                        if (copyIsArray && !Array.isArray(src)) {
-                            clone = [];
-                        } else if (!copyIsArray && !PuSet.isPlainObject(src)) {
-                            clone = {};
-                        } else {
-                            clone = src;
-                        }
-                        copyIsArray = false;
-
-                        // Never move original objects, clone them
-                        target[name] = PuSet.extend(deep, clone, copy);
-
-                        // Don't bring in undefined values
-                    } else if (copy !== undefined) {
-                        target[name] = copy;
-                    }
-                }
-            }
-        }
-
-        // Return the modified object
-        return target;
+        return type; // 基础类型直接返回typeof结果
     };
 
-    // PuSet.extend();
+    /**
+     * 判断是否为类数组对象（可遍历的长度属性）
+     * 包含：纯数组、原型链为数组的对象、合法length的类数组(arguments/DOM集合等)
+     * @param {*} obj 待判断对象
+     * @returns {boolean}
+     */
+    const isArrayLike = function isArrayLike(obj) {
 
-    // Populate the class2type map
-    PuSet.each("Boolean Number String Function Array Date RegExp Object Error Symbol".split(" "), function (name) {
-        class2type["[object " + name + "]"] = name.toLowerCase();
-    });
+        // 1. 真数组
+        if (Array.isArray(obj)) {
+            return true;
+        }
 
-    function isArrayLike(obj) {
-
-        // Support: real iOS 8.2 only (not reproducible in simulator)
-        // `in` check used to prevent JIT error (gh-2145)
-        // hasOwn isn't used here due to false negatives
-        // regarding Nodelist length in IE
-        let length = !!obj && "length" in obj && obj.length,
-            type = toType(obj);
-
+        // 2. 排除绝对不可能为类数组的类型：
+        // 函数 / window全局对象（特殊对象，排除）
         if (isFunction(obj) || isWindow(obj)) {
             return false;
         }
 
-        return type === "array" || length === 0 ||
-            typeof length === "number" && length > 0 && (length - 1) in obj;
-    }
-
-    /**
-     * Implement the identical functionality for filter and not
-     * 
-     * 过滤掉符合 qualifier 规则的元素，not 取反
-     * 
-     * @param {Element[]} elements 
-     * @param {any} qualifier 
-     * @param {Boolean} not 
-     * @returns {Element[]}
-     */
-    function winnow(elements, qualifier, not) {
-        if (isFunction(qualifier)) {
-            return PuSet.grep(elements, function (elem, i) {
-                return !!qualifier.call(elem, i, elem) !== not;
-            });
-        }
-
-        // Single element
-        if (qualifier.nodeType) {
-            return PuSet.grep(elements, function (elem) {
-                return (elem === qualifier) !== not;
-            });
-        }
-
-        // Arraylike of elements (PuSet, arguments, Array)
-        if (typeof qualifier !== "string") {
-            return PuSet.grep(elements, function (elem) {
-                return (indexOf.call(qualifier, elem) > -1) !== not;
-            });
-        }
-
-        let selector = rootPuSet.find(qualifier);
-        return PuSet.grep(elements, function (element) {
-            return selector.indexOf(element, 0) >= 0;
-        }, not);
-
-    }
-
-    PuSet.fn.extend({
-        find: function (selector) {
-            let arr = [];
-            if (selector && "string" === typeof selector) {
-                this.each(function (target) {
-                    try {
-                        PuSet.merge(arr, target.querySelectorAll(selector));
-                    } catch (ex) {
-                        PuSet.error(`'${selector}' is not a valid selector.`);
-                    }
-                });
-            }
-            return this.pushStack(arr);
-        },
-        filter: function (selector) {
-            return this.pushStack(winnow(this, selector, false));
-        },
-        not: function (selector) {
-            return this.pushStack(winnow(this, selector, true));
-        },
-        is: function (selector) {
-            return !!winnow(this, typeof selector === "string" ? rootPuSet.find(selector) : selector || [], false).length;
-        }
-    });
-
-    // A central reference to the root PuSet(document)
-    let rootPuSet, init = PuSet.fn.init = function (selector, context, root) {
-
-        // HANDLE: $(""), $(null), $(undefined), $(false)
-        if (!selector) {
-            return this;
-        }
-
-        // Method init() accepts an alternate rootPuSet
-        // so migrate can support PuSet.sub (gh-2101)
-        root = root || rootPuSet;
-
-        // Handle HTML strings
-        if (typeof selector === "string") {
-
-            if (!context || context.puset) {
-                return (context || root).find(selector);
-
-                // HANDLE: $(expr, context)
-                // (which is just equivalent to: $(context).find(expr)
-            } else {
-                return this.constructor(context).find(selector);
-            }
-
-            // HANDLE: $(DOMElement)
-        } else if (selector.nodeType) {
-            this[0] = selector;
-            this.length = 1;
-            return this;
-
-            // HANDLE: $(function)
-            // Shortcut for document ready
-        } else if (isFunction(selector)) {
-            return root.ready !== undefined ?
-                root.ready(selector) :
-
-                // Execute immediately if ready is not present
-                selector(PuSet);
-
-
-            // HANDLE: $(Array), $(Object)
-        } else if (TYPE_OBJECT === typeof selector) {
-            return PuSet.makeArray(selector, this);
-        }
-
-        return this;
+        // 3. 校验类数组核心条件：必须拥有合法length属性
+        const length = !!obj && LENGTH_PROPERTY in obj && obj.length;
+        // typeof length === "number"：length必须是数字类型
+        // length === length >>> 0：无符号右移0位，校验length为【非负整数】
+        // 过滤：负数、小数、NaN、非法length
+        return typeof length === "number" && length === length >>> 0;
     };
 
-    // Give the init function the PuSet prototype for later instantiation
-    init.prototype = PuSet.fn;
+    // ===================== PuSet核心构造类（继承Array） =====================
+    /**
+     * PuSet核心构造类 - 继承Array，实现DOM元素集合的链式操作
+     * 类似jQuery的$对象，封装DOM集合的常用操作
+     */
+    const PuSetConstructor = class PuSet extends Array {
 
-    // Initialize central reference
-    rootPuSet = PuSet(document);
+        prevObject = null; // 链式操作的上一个对象（用于end()方法）
 
-    PuSet.each({
-        "XML": "application/xml",
-        "SVG": "image/svg+xml",
-        "HTML": "text/html"
-    }, function (value, name) {
-        PuSet["parse" + name] = function (data) {
-            let obj = null;
+        /**
+         * 构造函数
+         * @param  {...any} args - 初始化参数（DOM元素/元素数组）
+         */
+        constructor(...args) {
+            super(...args);
+        }
 
-            if (data || "string" == typeof data) {
-                try {
-                    obj = (new DOMParser()).parseFromString(data, value);
-                } catch (e) {
-                    if (window.ActiveXObject) {
-                        obj = new ActiveXObject("Microsoft.XMLDOM");
-                        obj.loadXML(data);
-                    } else {
-                        obj = null;
+        /**
+         * DOM就绪后执行回调
+         * @param {Function} fn - 就绪回调（参数为PuSetFactory）
+         * @returns {PuSetConstructor} 自身（链式调用）
+         */
+        ready(fn) {
+            readyPromise.then(() => fn(PuSetFactory)).catch(console.error);
+            return this;
+        }
+
+        /**
+         * 设置对象属性
+         * @param {string} property 属性名
+         * @param {*} value 要设置的属性值
+         * @param {boolean} [priority=false] 原值优先模式。为true时，如果属性已存在则不覆盖
+         * @returns {this} 返回对象本身，支持链式调用
+         */
+        setProperty(property, value, priority = false) {
+            // 只有当 priority 为 true 且属性已存在时，才不设置值
+            if (!(priority === true && Object.hasOwn(this, property))) {
+                Reflect.set(this, property, value);
+            }
+            return this;
+        }
+
+        /**
+         * 推入新的元素栈，并保留上一个对象引用（核心链式操作基础）
+         * @param {Node[]} elems - 新的DOM元素数组
+         * @returns {PuSetConstructor} 新的PuSet实例
+         */
+        pushStack(elems) {
+            return PuSetFactory
+                .merge(new PuSetConstructor(), elems)
+                .setProperty('prevObject', this);
+        }
+
+        /**
+         * 工厂函数、入口
+         * @param {string|Node|Document|PuSetConstructor|Function} [selector] 选择器
+         * @param {Node|Document|PuSetConstructor} [context] 上下文环境
+         * @returns PuSet实例
+         */
+        PuSet(selector, context) {
+            // 空参数：返回空实例
+            if (!selector) {
+                return new PuSetConstructor();
+            }
+            // PuSet实例
+            if (selector.constructor === PuSetConstructor) {
+                return selector;
+            }
+            // DOM节点：返回包含该节点的实例
+            if (selector.nodeType) {
+                return new PuSetConstructor(selector);
+            }
+            // 字符串选择器：根据上下文查找
+            if (TYPES.String === typeof selector) {
+                return PuSetFactory(context || $document).find(selector);
+            }
+            // 函数：DOM就绪后执行
+            if (isFunction(selector)) {
+                return $document.ready(selector);
+            }
+            // 其他类型（数组/类数组）：封装成新的PuSet实例
+            return PuSetFactory.makeArray(selector, new PuSetConstructor());
+        }
+
+        /**
+         * 筛选集合中的奇数项（索引从0开始，i+1为1/3/5...）
+         * @returns {PuSetConstructor} 筛选后的新实例
+         */
+        even() {
+            return this.pushStack(PuSetFactory.grep(this, (_elem, i) => (i + 1) % 2));
+        }
+
+        /**
+         * 筛选集合中的偶数项（索引从0开始，i为1/3/5...）
+         * @returns {PuSetConstructor} 筛选后的新实例
+         */
+        odd() {
+            return this.pushStack(PuSetFactory.grep(this, (_elem, i) => i % 2));
+        }
+
+        /**
+         * 根据索引获取指定元素（支持负数索引）
+         * @param {number} i - 索引（负数表示从末尾倒数）
+         * @returns {PuSetConstructor} 包含指定元素的新实例
+         */
+        eq(i) {
+            const len = this.length, j = +i + (i < 0 ? len : 0); // 处理负数索引
+            return this.pushStack(j >= 0 && j < len ? [this[j]] : []);
+        }
+
+        /**
+         * 向当前集合添加新的元素（去重排序）
+         * @param {string|HTMLElement|Array} selector - 选择器/元素/元素数组
+         * @param {HTMLElement|PuSetConstructor} [context] - 查找上下文
+         * @returns {PuSetConstructor} 合并后的新实例
+         */
+        add(selector, context) {
+            const res = PuSetFactory(selector, context);
+            push.apply(res, this);
+            return PuSetFactory.uniqueSort(res).setProperty('prevObject', this);
+        }
+
+        /**
+         * 查找当前集合中所有元素的后代元素
+         * @param {string} selector - CSS选择器
+         * @returns {PuSetConstructor} 匹配的后代元素集合
+         */
+        find(selector) {
+            const arr = [], m = this.length;
+            if (m > 0 && selector && TYPES.String === typeof selector) {
+                for (let i = 0; i < m; i++) {
+                    push.apply(arr, this[i]?.querySelectorAll?.(selector))
+                }
+            }
+            // 多个元素时去重，单个元素直接返回
+            return this.pushStack(m > 1 ? PuSetFactory.uniqueSort(arr) : arr);
+        }
+
+        /**
+         * 回到链式操作的上一个对象
+         * @returns {PuSetConstructor} 上一个实例或新空实例
+         */
+        end() {
+            return this.prevObject || new PuSetConstructor();
+        }
+
+        /**
+         * 筛选符合条件的元素
+         * @param {string|Function|HTMLElement} selector - 筛选条件
+         * @returns {PuSetConstructor} 筛选后的新实例
+         */
+        filter(selector) {
+            return this.pushStack(winnow(this, selector || [], false));
+        }
+
+        /**
+         * 排除符合条件的元素
+         * @param {string|Function|HTMLElement} selector - 排除条件
+         * @returns {PuSetConstructor} 排除后的新实例
+         */
+        not(selector) {
+            return this.pushStack(winnow(this, selector || [], true));
+        }
+
+        /**
+         * 判断集合中是否有元素符合条件
+         * @param {string|Function|HTMLElement} selector - 判断条件
+         * @returns {boolean} 是否存在匹配元素
+         */
+        is(selector) {
+            return !!winnow(this, selector || [], false).length;
+        }
+    };
+
+    // 绑定到document，作为全局查找的基础
+    const $document = new PuSetConstructor(main_document);
+
+    const documentElement = main_document.documentElement;
+    const matches = documentElement.matches
+        || documentElement.matchesSelector
+        || function matches(selectors) {
+            return includes.call((this.document || this.ownerDocument).querySelectorAll(selectors), this);
+        };
+
+    // ===================== 核心筛选工具函数 =====================
+    /**
+     * 核心元素筛选函数（filter/not/is的底层实现）
+     * @param {Array} elements - 待筛选的DOM元素数组
+     * @param {string|Function|HTMLElement|Array} qualifier - 筛选条件
+     * @param {boolean} not - 是否取反（true=排除，false=保留）
+     * @returns {Array} 筛选后的元素数组
+     */
+    const winnow = function winnow(elements, qualifier, not) {
+        // 1. 条件为函数：执行函数判断
+        if (isFunction(qualifier)) {
+            return PuSetFactory.grep(elements, (elem, i) => qualifier.call(elem, i, elem), not);
+        }
+        // 2. 条件为DOM节点：判断元素是否全等
+        if (qualifier.nodeType) {
+            return PuSetFactory.grep(elements, elem => elem === qualifier, not);
+        }
+        // 3. 条件为非字符串（如数组）：判断元素是否在数组中
+        if (TYPES.String === typeof qualifier) {
+            return PuSetFactory.grep(elements, elem => matches.call(elem, qualifier), not);
+        }
+        // 4. 条件为字符串选择器：查找匹配的元素
+        return PuSetFactory.grep(elements, elem => includes.call(qualifier, elem), not);
+    };
+
+    /**
+     * DOM节点排序函数（按文档中的位置排序）
+     * @param {HTMLElement} a - 节点A
+     * @param {HTMLElement} b - 节点B
+     * @returns {number} 排序值（-1=A在前，1=B在前）
+     */
+    const compareDocumentPositionSort = function compareDocumentPositionSort(a, b) {
+
+        if (a === b) {
+            return 0;
+        }
+
+        // Sort on method existence if only one input has compareDocumentPosition
+        let compare = !a.compareDocumentPosition - !b.compareDocumentPosition;
+        if (compare) {
+            return compare;
+        }
+
+        compare = (a.ownerDocument || a) === (b.ownerDocument || b)
+            ? a.compareDocumentPosition(b)
+            : 1;
+
+        // Disconnected nodes
+        if (compare & 1) {
+
+            if (a === main_document || a.ownerDocument === main_document) {
+                return -1;
+            }
+
+            if (b === main_document || b.ownerDocument === main_document) {
+                return 1;
+            }
+
+            return 0;
+        }
+
+        return compare & 4 ? -1 : 1;
+    };
+
+    // ===================== PuSet核心工厂对象 =====================
+    /**
+     * PuSet核心工厂对象 - 暴露所有公共方法，也是库的入口函数
+     * @param {string|HTMLElement|Function|Array} selector - 选择器/元素/就绪函数/元素数组
+     * @param {HTMLElement|PuSetConstructor} [context] - 查找上下文
+     * @returns {PuSetConstructor} PuSet实例
+     */
+    const PuSetFactory = Object.assign(PuSetConstructor.prototype.PuSet, {
+        // 暴露版本号
+        version: version,
+        // DOM就绪状态（初始为false，就绪后改为true）
+        isReady: returnFalse,
+        // 暴露类型判断方法
+        isFunction: isFunction,
+        isWindow: isWindow,
+        // 数组判断（优先使用原生Array.isArray，降级使用toType）
+        isArray: Array.isArray || function (obj) {
+            return TYPES.Array === toType(obj);
+        },
+        /**
+         * 判断是否为XML文档（非HTML）
+         * @param {HTMLElement} elem - 元素节点
+         * @returns {boolean} 是否为XML文档
+         */
+        isXMLDoc: function (elem) {
+            const namespace = elem && elem.namespaceURI,
+                docElem = elem && (elem.ownerDocument || elem).documentElement;
+            return !rhtmlSuffix.test(namespace || docElem && docElem.nodeName || "HTML");
+        },
+        isDirectPuSet(obj) {
+            return obj && obj.constructor === PuSetConstructor && obj instanceof PuSetConstructor;
+        },
+        /**
+         * 判断是否为数值（支持字符串形式的数值）
+         * @param {*} obj - 待检测对象
+         * @returns {boolean} 是否为有效数值
+         */
+        isNumeric: function (obj) {
+            const type = toType(obj);
+            return (type === TYPES.Number || type === TYPES.String) && !isNaN(obj - parseFloat(obj));
+        },
+        /**
+         * 判断是否为纯对象（字面量对象/Object构造的对象）
+         * @param {*} obj - 待检测对象
+         * @returns {boolean} 是否为纯对象
+         */
+        isPlainObject: function (obj) {
+            let proto, Ctor;
+            // 先通过toString排除非对象类型
+            if (!obj || toString.call(obj) !== "[object Object]") {
+                return false;
+            }
+            proto = getProto(obj);
+            // 无原型的对象（如Object.create(null)）视为纯对象
+            if (!proto) {
+                return true;
+            }
+            // 检查构造函数是否为原生Object
+            Ctor = hasOwn.call(proto, "constructor") && proto.constructor;
+            return TYPES.Function === typeof Ctor && ObjectFunctionString === fnToString.call(Ctor);
+        },
+        /**
+         * 判断是否为空对象（无自有属性）
+         * @param {Object} obj - 待检测对象
+         * @returns {boolean} 是否为空对象
+         */
+        isEmptyObject: function (obj) {
+            for (const name in obj) {
+                return false;
+            }
+            return true;
+        },
+        /**
+         * 显示/隐藏元素（通过属性和类名双重控制）
+         * @param {HTMLElement} element - 目标元素
+         * @param {boolean} value - true=显示，false=隐藏
+         * @returns {HTMLElement} 目标元素（链式调用）
+         */
+        show(element, value = false) {
+            if (value) {
+                element.removeAttribute(HIDE_ATTRIBUTE);
+                element.classList.remove("hide");
+            } else {
+                element.setAttribute(HIDE_ATTRIBUTE, HIDE_ATTRIBUTE);
+                element.classList.add("hide");
+            }
+            return element;
+        },
+        /**
+         * 元素数组去重并按文档位置排序
+         * @param {Array} likeArray - 待处理的DOM元素数组
+         * @returns {Array} 去重排序后的数组
+         */
+        uniqueSort(likeArray) {
+            // 先排序，让重复元素相邻
+            sort.call(likeArray, compareDocumentPositionSort);
+
+            // 再去重，存在重复时移除索引值更大的项
+            return this.reverseForEachWhile(likeArray, function unique(v, i, a) {
+                if (v === a[i - 1]) {
+                    splice.call(a, i, 1);
+                }
+            });
+        },
+        /**
+         * 合并两个数组（修改第一个数组）
+         * @param {Array} first - 目标数组
+         * @param {Array} second - 待合并数组
+         */
+        merge: function merge(first, second) {
+            const len = +second.length;
+            let i = first.length;
+            for (let j = 0; j < len; j++) {
+                first[i++] = second[j];
+            }
+            first.length = i;
+            return first;
+        },
+        /**
+         * 筛选数组元素（类似Array.filter，但支持取反）
+         * @param {Array} elems - 待筛选数组
+         * @param {Function} callback - 筛选函数（参数：元素、索引）
+         * @param {boolean} [invert=false] - 是否取反
+         * @returns {Array} 筛选后的数组
+         */
+        grep: function grep(elems, callback, invert) {
+            const matches = [];
+            const callbackExpect = !invert;
+            for (let i = 0, length = elems.length; i < length; i++) {
+                // 回调结果与预期一致则保留
+                if (callbackExpect !== !callback(elems[i], i)) {
+                    matches.push(elems[i]);
+                }
+            }
+            return matches;
+        },
+        /**
+         * 遍历数组/对象
+         * @param {Array|Object} obj - 待遍历对象
+         * @param {(value:any, key:any, args: any) => boolean} callback - 遍历回调（参数：值、键/索引），返回false终止遍历
+         * @param {any} args - 额外参数
+         * @returns 原对象（链式调用）
+         */
+        each: function (obj, callback, args) {
+            let length, i;
+            // 类数组对象：按索引遍历
+            if (isArrayLike(obj)) {
+                length = obj.length;
+                for (i = 0; i < length; i++) {
+                    if (callback(obj[i], i, args) === false) {
+                        break;
                     }
                 }
-                if (!obj || obj.getElementsByTagName("parsererror").length) {
-                    throw new Error("is not invalid " + name);
+            } else {
+                // 普通对象：按属性遍历
+                for (i in obj) {
+                    if (callback(obj[i], i, args) === false) {
+                        break;
+                    }
                 }
             }
             return obj;
-        };
-    });
-
-    PuSet.isReady = false;
-
-    const readyPromise = new Promise(function (reslove) {
-
-        // The ready event handler and self cleanup method
-        function completed() {
-            document.removeEventListener("DOMContentLoaded", completed);
-            window.removeEventListener("load", completed);
-            PuSet.isReady = true;
-            reslove();
-        }
-
-        // Catch cases where $(document).ready() is called
-        // after the browser event has already occurred.
-        // Support: IE <=9 - 10 only
-        // Older IE sometimes signals "interactive" too soon
-        if (document.readyState === "complete" ||
-            (document.readyState !== "loading" && !document.documentElement.doScroll)) {
-
-            PuSet.isReady = true;
-
-            // Handle it asynchronously to allow scripts the opportunity to delay ready
-            window.setTimeout(reslove);
-
-        } else {
-
-            // Use the handy event callback
-            document.addEventListener("DOMContentLoaded", completed);
-
-            // A fallback to window.onload, that will always work
-            window.addEventListener("load", completed);
-        }
-
-    });
-
-    PuSet.readyException = function (error) {
-        window.setTimeout(function () {
-            throw error;
-        });
-    };
-
-    PuSet.fn.ready = function (fn) {
-
-        readyPromise
-            .then(() => fn(PuSet))
-
-            // Wrap PuSet.readyException in a function so that the lookup
-            // happens at the time of error handling instead of callback
-            // registration.
-            .catch(function (error) {
-                PuSet.readyException(error);
-            });
-
-        return this;
-    };
-
-
-    // ||||||||||  |||     ||| ||||||||||  |||     ||| |||||||||||
-    // |||         |||     ||| |||         |||||   |||     |||    
-    // ||||||||||  |||     ||| ||||||||||  ||| ||| |||     |||    
-    // |||           ||| |||   |||         |||   |||||     |||    
-    // ||||||||||      |||     ||||||||||  |||     |||     |||    
-
-    const rnothtmlwhite = (/[^\x20\t\r\n\f]+/g);
-    const rtypenamespace = /^([^.]*)(?:\.(.+)|)/;
-
-    function returnFalse() {
-        return false;
-    }
-
-    // ActionEvent is based on DOM3 Events as specified by the ECMAScript Language Binding
-    // https://www.w3.org/TR/2003/WD-DOM-Level-3-Events-20030331/ecma-script-binding.html
-    const ActionEvent = createClass({
-        "target": null,
-        "type": "",
-        "srcEvent": null,
-        "isFirst": true,
-        "isFinal": true,
-        "isCustom": false,
-        "namespace": "",
-        "rnamespace": null,
+        },
 
         /**
          * 
-         * @param {string|ActionEvent|Event} src 
-         * @param {object} props 
+         * @param {any[]} array 
+         * @param {(value:any,index:number,array:any[]) => boolean | undefined} predicate 
          * @returns 
          */
-        constructor: function ActionEvent(src, props) {
-
-            if (src instanceof ActionEvent) {
-                return props ? PuSet.extend(src, props) : src;
-            }
-
-            this.center = { "x": 0, "y": 0 };
-
-            // Event object
-            if (src && src.type) {
-                this.srcEvent = src;
-                this.type = src.type;
-
-                // Event type
-            } else {
-                this.type = src;
-            }
-
-            // Put explicitly provided properties onto the event object
-            if (props) {
-                PuSet.extend(this, props);
-            }
-
-            // Create a timestamp if incoming event doesn't have one
-            this.timeStamp = src && src.timeStamp || Date.now();
-        },
-
-        preventDefault: function () {
-            if (this.srcEvent) {
-                this.srcEvent.preventDefault();
-            }
-        },
-
-        stopPropagation: function () {
-            if (this.srcEvent) {
-                this.srcEvent.stopPropagation();
-            }
-        },
-
-        stopImmediatePropagation: function () {
-            if (this.srcEvent) {
-                this.srcEvent.stopImmediatePropagation();
-            }
-        },
-
-        getComposedPath: function (target) {
-            let path, obj;
-            if (obj = this.srcEvent) {
-                if (obj.composedPath) {
-                    path = obj.composedPath();
-                } else if (obj.path) {
-                    path = obj.path;
-                } else {
-                    for (path = [obj = obj.target]; obj = obj.parentNode; path.push(obj));
-                    path.push(window);
+        reverseForEachWhile(array, predicate) {
+            for (let index = array.length - 1; index >= 0; index--) {
+                if (predicate(array[index], index, array) === false) {
+                    return array;
                 }
             }
-            path = toArray(path || []);
-            return path.slice(0, 1 + path.indexOf(target || this.target));
-        }
+            return array;
+        },
 
+        /**
+         * 转为数组
+         * @param {*} arr - 待转换的对象（数组/类数组/单个值）
+         * @param {Array} [results] - 目标数组（可选）
+         * @returns {Array} 转换后的数组
+         */
+        makeArray: function makeArray(arr, results) {
+            const ret = results || [];
+            if (arr != null) {
+                if (isArrayLike(Object(arr))) {
+                    // 类数组：合并到目标数组（字符串特殊处理为数组）
+                    PuSetFactory.merge(ret, TYPES.String === typeof arr ? [arr] : arr);
+                } else {
+                    // 单个值：push到目标数组
+                    push.call(ret, arr);
+                }
+            }
+            return ret;
+        },
+        /**
+         * 触发文件下载（通过创建a标签模拟点击）
+         * @param {string} url - 下载地址
+         * @param {string} [filename="filename"] - 文件名
+         */
+        download: function (url, filename = "filename") {
+            const save_link = main_document.createElementNS(NS_HTML, "a");
+            save_link.href = url;
+            save_link.download = filename;
+            save_link.dispatchEvent(new MouseEvent("click", { "view": window, "bubbles": true, "cancelable": true }));
+            if (url.startsWith("blob:")) {
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+        },
+
+        /**
+         * Base64数据URL转为Blob对象
+         * @param {string} base64 - 完整的base64数据URL（如data:image/png;base64,...）
+         * @returns {Blob|null} 转换后的Blob对象，失败返回null
+         */
+        base64ToBlob: function base64ToBlob(base64) {
+            // 入参校验
+            if (typeof base64 !== 'string' || base64.trim() === '') {
+                console.warn('base64ToBlob: 输入必须是非空字符串');
+                return null;
+            }
+            try {
+                // 匹配dataURL格式：data:[mimeType];base64,[data]
+                const dataUrlPattern = /^\s*data:([^;]*);base64,(\S+)\s*$/;
+                const matchResult = base64.match(dataUrlPattern);
+                if (matchResult === null || matchResult.length < 3) {
+                    console.warn('base64ToBlob: 输入不是有效的base64数据URL格式');
+                    return null;
+                }
+                const [, mimeType, base64Data] = matchResult;
+                // 解码base64数据
+                const decodedStr = atob(base64Data);
+                const byteLength = decodedStr.length;
+                const uint8Array = new Uint8Array(byteLength);
+                // 转换为Uint8Array
+                for (let i = 0; i < byteLength; i++) {
+                    uint8Array[i] = decodedStr.charCodeAt(i);
+                }
+                // 创建Blob对象
+                return new Blob([uint8Array], { type: mimeType });
+            } catch (error) {
+                console.error('base64ToBlob 转换失败:', error);
+                return null;
+            }
+        }
+    });
+
+    // ===================== DOM就绪Promise =====================
+    /**
+     * DOM就绪Promise - 统一处理DOMContentLoaded和load事件
+     * 就绪后将PuSetFactory.isReady设为true
+     */
+    const readyPromise = new Promise(function (resolve) {
+        function completed() {
+            // 移除事件监听，避免重复触发
+            main_document.removeEventListener("DOMContentLoaded", completed);
+            window.removeEventListener("load", completed);
+            resolve();
+        }
+        // 已就绪：立即resolve（加setTimeout避免同步执行）
+        if (main_document.readyState === "complete" || (main_document.readyState !== "loading" && !main_document.documentElement.doScroll)) {
+            window.setTimeout(resolve);
+        } else {
+            // 未就绪：监听事件
+            main_document.addEventListener("DOMContentLoaded", completed);
+            window.addEventListener("load", completed);
+        }
+    }).then(function () {
+        // 标记DOM已就绪
+        PuSetFactory.isReady = returnTrue;
+    });
+
+
+
+
+
+
+    // ===================== 事件处理核心 =====================
+    const rnothtmlwhite = (/[^\x20\t\r\n\f]+/g); // 匹配非空白字符
+    const rtypenamespace = /^([^.]*)(?:\.(.+)|)/; // 匹配事件类型和命名空间（如click.test → type=click, namespace=test）
+    const expando = Symbol("puset_node_global_data"); // 事件数据的唯一标识（避免属性冲突）
+
+    /**
+     * 确保对象拥有指定属性（不存在则创建）
+     * @param {Object} target - 目标对象
+     * @param {string|Symbol} property - 属性名
+     * @param {Function} [Constructor=Object] - 构造函数
+     * @param  {...any} args - 构造函数参数
+     * @returns {*} 属性值（或null，若对象不可扩展）
+     */
+    const ensureObjectProperty = function ensureObjectProperty(target, property, Constructor = Object, ...args) {
+        if (target !== Object(target)) return null;
+        const value = target[property];
+        if (value) {
+            return value;
+        }
+        // 对象可扩展：创建新实例
+        if (typeof Constructor === "function" && Object.isExtensible(target)) {
+            return target[property] = new Constructor(...args);
+        }
+        return null;
+    };
+
+    /**
+     * 获取事件的传播路径（兼容不同浏览器）
+     * @param {HTMLElement} target - 根元素
+     * @param {Event} event - 事件对象
+     * @returns {EventTarget[]} 事件传播路径数组
+     */
+    const getComposedPath = function getComposedPath(target, event) {
+        const path = event.composedPath?.() || [];
+        if (path.length === 0) {
+            for (let node = event.target; node; node = node.parentNode) {
+                push.call(path, node);
+                if (node === target) break;
+            }
+        }
+        // 如果 path 存在 target，返回 path 中 target 之前的数组
+        return slice.call(path, 0, 1 + indexOf.call(path, target));
+    };
+
+    /**
+     * 事件替代映射（处理不可冒泡的事件）
+     * 如focus→focusin（focus不可冒泡，focusin可冒泡）
+     */
+    const EventSubstitute = Object.freeze({
+        "focus": "focusin",
+        "blur": "focusout",
+        "mouseenter": "mouseover",
+        "mouseleave": "mouseout",
+        "pointerenter": "pointerover",
+        "pointerleave": "pointerout"
     });
 
     /**
-     * 从 arr 中找出与 obj 部分属性（attrs）相同的对象
-     * @param {any[]} arr 数组
-     * @param {object} obj 查找对象
-     * @param {string[]} attrs 对比属性列表
-     * @param {(item:object, index:number) => boolean} func 如果从arr中找到了，则执行func，如果func() 返回 false，中止查找后续，否则继续查找
+     * 添加事件监听（底层）
+     * @param {HTMLElement} node - 目标元素
+     * @param {string} types - 事件类型（多个用空格分隔）
+     * @param {string} selector - 委托选择器
+     * @param {Function} handler - 处理函数
+     * @param {string} namespace - 命名空间
      */
-    function similar(arr, obj, attrs, func) {
-        let elem, all, length;
-        if (isArrayLike(arr) && (length = arr.length) > 0) {
-            if (isFunction(attrs)) {
-                func = attrs, attrs = obj == null ? null : Object.keys(obj);
-            }
-            f: while (length--) {
-                elem = arr[length], all = true;
-                PuSet.each(attrs, attr => all = all && elem[attr] === obj[attr]);
-                if (all && (func(elem, length) === false)) {
-                    break f;
-                }
-            }
-        }
-    }
+    const add = function add(node, types, selector, handler, namespace = "") {
+        // 获取/创建事件数据存储对象
+        const global = ensureObjectProperty(node, expando, Object);
+        if (global === null) return;
+        const data = ensureObjectProperty(global, "events", Object);
 
-    function removeEventListener(elem, type, handle) {
+        // 解析事件类型（拆分多个类型）
+        PuSetFactory.reverseForEachWhile((types || "").match(rnothtmlwhite) || [""], function addHandler(value) {
+            let type, tmp, namespaces;
+            // 解析事件类型和命名空间
+            tmp = rtypenamespace.exec(value + namespace) || [];
+            type = tmp[1];
+            namespaces = sort.call((tmp[2] || "").split("."));
+            if (!type) return;
 
-        // This "if" is needed for plain objects
-        if (elem.removeEventListener) {
-            elem.removeEventListener(type, handle);
-        }
-    }
+            // 真实监听的事件类型
+            const actual = EventSubstitute[type] || type;
 
-    const HANDLER_ATTRS = ["isCustom", "handler", "selector", "namespace"];
+            // 获取/创建该事件类型的处理函数数组
+            const handlemap = ensureObjectProperty(data, actual, Object);
+            const handles = ensureObjectProperty(handlemap, "handles", Array);
 
-    const ActionInput = createClass({
+            // 添加处理函数配置
+            handles.push(Object.freeze({
+                selector: selector ? String(selector) : null,
+                handler: handler,
+                rnamespace: false,
+                namespace: namespaces.join(".")
+            }));
 
-        /**
-         * 抑制器：触发 dblclick 时，不触发 click
-         */
-        restrictive: false,
+            // 首次添加：创建统一监听器并绑定
+            if (!handlemap.listener && node.addEventListener) {
+                node.addEventListener(actual, handlemap.listener = function listener(event) {
+                    // 确保事件对象绑定的元素是当前元素
+                    if (this !== node) return void console.warn(this, node);
 
-        /**
-         * 自定义事件的管理器，依赖于 Hammer
-         */
-        manager: null,
+                    const path = getComposedPath(node, event);
+                    const data = { actual: actual, type: type, target: node, path: path };
+                    const not = !event.bubbles;
 
-        /**
-         * 事件监听器
-         */
-        listener: returnFalse,
+                    let len = 0, bubbles = new Set();
 
-        /**
-         * 是否已注册了自定义事件的管理器
-         */
-        registered: false,
+                    for (const handle of handles) {
+                        const options = Object.assign({}, handle, data);
+                        const { selector, handler } = options;
 
-
-        inputClass: null,
-
-        target: null,
-
-        handlers: null,
-
-        /**
-         * 某个元素的交互行为监听集合
-         * @param {HTMLElement} target 
-         * @returns 
-         */
-        constructor: function ActionInput(target) {
-            const actionInput = this;
-            // 目标元素
-            this.target = target;
-            // 用户事件集合
-            this.handlers = {};
-            // 绑定到DOM元素上的事件
-            this.listener = function (ev) {
-                actionInput.trigger(new ActionEvent(ev));
-            };
-
-            return this;
-        },
-
-        init: function () {
-
-            if (!this.registered) {
-
-                if (window.Hammer && Hammer.Manager) {
-
-                    const actionInput = this;
-                    actionInput.manager = new Hammer.Manager(actionInput.target, {
-                        recognizers: Hammer.defaults.preset,
-                        inputClass: actionInput.inputClass,
-                        domEvents: false
-                    });
-
-                    /**
-                     * emit event to the listeners
-                     * @param {String} event
-                     * @param {Object} data
-                     */
-                    actionInput.manager.emit = function (event, data) {
-                        data.isCustom = true;
-                        actionInput.trigger(new ActionEvent(event, data));
-                    };
-
-                    actionInput.registered = true;
-                } else {
-                    console.warn("`PuSet().action()` need library `Hammer`.\nsee http://hammerjs.github.io/")
-                }
-            }
-
-            return this;
-
-        },
-
-        /**
-         * 添加事件监听
-         * @param {string|string[]} types 事件类型
-         * @param {string} selector 选择器
-         * @param {Function} fn 监听成功时执行的函数
-         * @param {boolean} one 只执行一次
-         * @param {boolean} isSystem 系统级事件
-         * @returns 
-         */
-        add: function (types, selector, fn, one, isSystem) {
-
-            const actionInput = this;
-
-            // Types can be a map of types/handlers
-            if (typeof types === TYPE_OBJECT) {
-                for (let type in types) {
-                    this.add(type, selector, types[type], one, isSystem);
-                }
-                return actionInput;
-            }
-
-            if (fn == null) {
-                if (typeof selector === "string") {
-                    fn = undefined;
-                } else {
-                    fn = selector;
-                    selector = undefined;
-                }
-            }
-
-            if (fn === false) {
-                fn = returnFalse;
-            } else if (!fn) {
-                return actionInput;
-            }
-
-            const isCustom = !isSystem;
-
-            let t, type, tmp, namespaces;
-
-            // Handle multiple events separated by a space
-            types = (types || "").match(rnothtmlwhite) || [""];
-            t = types.length;
-            while (t--) {
-                tmp = rtypenamespace.exec(types[t]) || [];
-                type = tmp[1];
-                namespaces = (tmp[2] || "").split(".").sort();
-
-                // There *must* be a type, no attaching namespace-only handlers
-                if (!type) {
-                    continue;
-                }
-
-                let handlerObj = {
-                    selector: selector,
-                    isCustom: isCustom,
-                    handler: fn,
-                    one: !!one,
-                    namespace: namespaces.join(".")
-                };
-
-                let arr, isNewHandler = true;
-                if (!Array.isArray(arr = actionInput.handlers[type])) {
-                    actionInput.handlers[type] = arr = new Array(0);
-                }
-
-                // 判断是否存在
-                similar(arr, handlerObj, HANDLER_ATTRS, () => isNewHandler = false);
-
-                if (isNewHandler) {
-                    arr.push(handlerObj);
-                    // TODO 
-                    // 添加事件监听
-                    if (isSystem && actionInput.target.addEventListener) {
-                        actionInput.target.addEventListener(type, actionInput.listener);
-                    }
-                }
-            }
-
-            return actionInput;
-
-        },
-
-
-        /**
-         * 移除事件监听
-         * @param {string|string[]} types 事件类型
-         * @param {string} selector 选择器
-         * @param {Function} fn 监听成功时执行的函数
-         * @returns 
-         */
-        remove: function (types, selector, fn) {
-            let actionInput = this;
-
-            let t, type, tmp, namespaces;
-
-            // Handle multiple events separated by a space
-            types = (types || "").match(rnothtmlwhite) || [""];
-            t = types.length;
-            while (t--) {
-                tmp = rtypenamespace.exec(types[t]) || [];
-                type = tmp[1];
-                namespaces = (tmp[2] || "").split(".").sort();
-
-                // Unbind all events (on this namespace, if provided) for the element
-                if (!type) {
-                    for (type in actionInput.handlers) {
-                        this.remove(type + types[t], selector, fn);
-                    }
-                    continue;
-                }
-
-                tmp = tmp[2] && new RegExp("(^|\\.)" + namespaces.join("\\.(?:.*\\.|)") + "(\\.|$)");
-
-                let arr = actionInput.handlers[type];
-
-                similar(arr, null, (obj, i) => {
-
-                    if ((!tmp || tmp.test(obj.namespace)) &&
-                        (!selector || selector === obj.selector || selector === "**" && obj.selector) &&
-                        (!fn || fn === obj.handler)) {
-
-                        arr.splice(i, 1);
-
+                        if (selector === null) {
+                            bubbles.add(handler.call(node, event, options));
+                        } else if (not) {
+                            len++;
+                        } else for (const child of path) {
+                            // 获取匹配的元素
+                            if (child !== node && matches.call(child, selector)) {
+                                bubbles.add(handler.call(child, event, options));
+                            }
+                        }
                     }
 
+                    if (len !== 0) {
+                        console.warn(`已忽略 ${len} 个不支持冒泡但赋予委托的[${event.type}]事件，请改用其他可行方案。`);
+                    }
+
+                    return !bubbles.has(false);
                 });
-
-                if (!arr || arr.length == 0) {
-                    // 移除事件监听
-                    removeEventListener(actionInput.target, type, actionInput.listener);
-                }
             }
-            return actionInput;
+        });
+    };
+
+    /**
+     * 移除事件监听（底层）
+     * @param {HTMLElement} node - 目标元素
+     * @param {string} types - 事件类型（多个用空格分隔）
+     * @param {string} selector - 委托选择器
+     * @param {Function} handler - 处理函数
+     * @param {string} namespace - 命名空间
+     */
+    const remove = function remove(node, types, selector, handler, namespace = "") {
+        // 获取事件数据存储对象
+        const global = ensureObjectProperty(node, expando, Object);
+        if (global === null) return;
+        const data = ensureObjectProperty(global, "events", Object);
+
+        PuSetFactory.reverseForEachWhile((types || "").match(rnothtmlwhite) || [""], function predicate(value) {
+            let type, tmp, namespaces;
+            // 解析事件类型
+            tmp = rtypenamespace.exec(value + namespace) || [];
+            type = tmp[1];
+            namespaces = sort.call((tmp[2] || "").split("."));
+
+            // 无类型：递归移除所有类型
+            if (!type) {
+                for (type in data) {
+                    remove(node, type + value, selector, handler);
+                }
+                return;
+            }
+
+            // 真实监听的事件类型
+            const actual = EventSubstitute[type] || type;
+
+            // 创建命名空间匹配正则
+            tmp = tmp[2] && new RegExp("(^|\\.)" + namespaces.join("\\.(?:.*\\.|)") + "(\\.|$)");
+            const handlemap = ensureObjectProperty(data, actual, Object);
+            const handles = ensureObjectProperty(handlemap, "handles", Array);
+
+            // 遍历处理函数数组，移除匹配的项
+            PuSetFactory.reverseForEachWhile(handles, function removeHandler(handle, j) {
+                if (
+                    (!tmp || tmp.test(handle.namespace)) && // 命名空间匹配
+                    (!selector || selector === handle.selector || selector === "**" && handle.selector) && // 选择器匹配
+                    (!handler || handler === handle.handler) // 处理函数匹配
+                ) {
+                    splice.call(handles, j, 1);
+                }
+            });
+
+            // 无处理函数：移除监听器并删除数据
+            if (handles.length == 0) {
+                if (node.removeEventListener) {
+                    node.removeEventListener(actual, handlemap.listener);
+                }
+                Reflect.deleteProperty(data, actual);
+            }
+
+        });
+    };
+
+    /**
+     * 事件操作统一入口（on/one/off的底层）
+     * @param {Array} elements - 目标元素数组
+     * @param {string|Object} types - 事件类型（或类型-处理函数映射）
+     * @param {string} selector - 委托选择器
+     * @param {Function} callback - 处理函数
+     * @param {number} method - 操作类型：2=on，1=one，0=off
+     * @returns {Array} 原元素数组（链式调用）
+     */
+    const action = function action(elements, types, selector, callback, method) {
+        // 类型为对象：遍历键值对（如{click: fn, mouseover: fn}）
+        if ("object" === typeof types) {
+            for (const type in types) {
+                action(elements, type, selector, types[type], method);
+            }
+            return elements;
+        }
+
+        // 选择器为函数：调整参数（无委托）
+        if ("function" === typeof selector) {
+            callback = selector;
+            selector = null;
+        }
+
+        // 处理函数为false：替换为返回false的函数
+        if (false === callback) {
+            callback = returnFalse;
+        } else if (!callback) {
+            return elements;
+        }
+
+        // one方法：执行后自动移除
+        const handler = (method === 1) ? function autoremove(event, options) {
+            const namespace = options.namespace ? ("." + options.namespace) : void 0;
+            remove(options.target, options.type, options.selector, options.handler, namespace);
+            return callback.call(this, event, options);
+        } : callback;
+
+        // 遍历元素执行操作                   // 选择操作（add/remove）
+        for (let i = 0, l = elements.length, operation = method >= 1 ? add : remove; i < l; i++) {
+            operation(elements[i], types, selector, handler);
+        }
+        return elements;
+    };
+
+    // 扩展PuSet实例的事件方法
+    Object.assign(PuSetConstructor.prototype, {
+        /**
+         * 绑定事件（支持委托）
+         * @param {string|Object} types - 事件类型
+         * @param {string|Function} [selector] - 委托选择器（或处理函数）
+         * @param {Function} [callback] - 处理函数
+         * @returns {PuSetConstructor} 自身（链式调用）
+         */
+        on: function (types, selector, callback) {
+            return action(this, types, selector, callback, 2);
         },
+        /**
+         * 绑定一次性事件（执行后自动移除）
+         * @param {string|Object} types - 事件类型
+         * @param {string|Function} [selector] - 委托选择器（或处理函数）
+         * @param {Function} [callback] - 处理函数
+         * @returns {PuSetConstructor} 自身（链式调用）
+         */
+        one: function (types, selector, callback) {
+            return action(this, types, selector, callback, 1);
+        },
+        /**
+         * 解绑事件
+         * @param {string|Object} [types] - 事件类型
+         * @param {string|Function} [selector] - 委托选择器（或处理函数）
+         * @param {Function} [callback] - 处理函数
+         * @returns {PuSetConstructor} 自身（链式调用）
+         */
+        off: function (types, selector, callback) {
+            return action(this, types, selector, callback, 0);
+        }
+    });
+
+    // ===================== 视图管理类（ViewManager） =====================
+    /**
+     * 视图管理类 - 实现数据与DOM的双向绑定（简易版）
+     * 支持数组/对象数据驱动DOM更新、事件委托、模板渲染
+     */
+    class ViewModel {
+        static guid = 0;
+        static index = Symbol("index");
+
+        #children = new Map(); // 子元素映射（key → HTMLElement）
+        #isInsert = false; // 是否指定了插入位置
+        #isFunctionTemplate = false; // 模板是否为函数
+        #hasTemplate = false;
+        #hasLayout = false; // 是否有布局函数
+        #hasResize = false; // 是否有尺寸变化回调
+        #isArrayData = false; // 数据是否为数组
+
+        get isArrayData() {
+            return this.#isArrayData
+        }
+
+        instanceId = 0;
+        target = null; // 根容器元素
+        selector = ""; // 子元素选择器
+        insert = null; // 插入位置元素/选择器
+        hidden = false; // 是否初始隐藏
+        source = null; // 原始数据
+        data = null; // 代理后的数据
+        template = null; // 模板（元素/字符串/函数）
+        layout = null; // 布局函数（node, value, property, this）
+        onresize = null; // 数组长度变化回调
 
         /**
-         * 触发事件
-         * @param {string|Event|ActionEvent} event 事件
-         * @returns 
+         * 构造函数
+         * @param {Object} options - 配置项
          */
-        trigger: function (event) {
+        constructor(options) {
+            Object.assign(this, options);
+            this.instanceId = "view-manager-" + ViewModel.guid++;
+            this.source = this.data ?? this.source ?? {}; // 原始数据兜底
+            // 映射子元素到数据键
+            if (this.selector) {
+                this.selector = String(this.selector).replace(/&/g, ":scope");
+                PuSetFactory.each(this.target.querySelectorAll(this.selector), (element, index, keys) => {
+                    this.#setChild(keys[index] || String(index), element);
+                }, Object.keys(this.source));
+            }
+            // 解析插入位置（字符串→元素）
+            if (this.insert && typeof this.insert === 'string') {
+                this.insert = this.target.querySelector(this.insert);
+            }
+            this.#isInsert = this.insert instanceof HTMLElement; // 标记是否有效插入位置
+            this.#isArrayData = PuSetFactory.isArray(this.source); // 判断数据类型
+            this.#hasLayout = isFunction(this.layout); // 判断是否有布局函数
+            this.#hasResize = isFunction(this.onresize); // 判断是否有resize回调
 
-            const actionInput = this, removedItems = [];
+            this.#initializeTemplate(); // 初始化模板
+            this.#initializeDataProxy(); // 初始化数据代理
 
-            let type = hasOwn.call(event, "type") ? event.type : event,
-                namespaces = hasOwn.call(event, "namespace") ? event.namespace.split(".") : [];
+            // 初始更新视图（非隐藏时）
+            if (!this.hidden) {
+                this.update(this.source);
+            }
+        }
 
-            if (!event.isCustom && type.indexOf(".") > -1) {
+        /**
+         * 初始化模板
+         */
+        #initializeTemplate() {
+            // 模板为函数：标记类型
+            if (isFunction(this.template)) {
+                this.#isFunctionTemplate = true;
+                this.#hasTemplate = true;
+                return;
+            }
+            const div = main_document.createElementNS(NS_HTML, 'div');
 
-                // Namespaced trigger; create a regexp to match event type in handle()
-                namespaces = type.split(".");
-                type = namespaces.shift();
-                namespaces.sort();
+            if (typeof this.template === 'string') {
+                // 模板为字符串：转为元素
+                div.innerHTML = this.template;
+                this.template = div.firstElementChild;
+            } else if (!this.template) {
+                // 无模板：使用第一个子元素作为模板
+                const firstKey = this.#children.keys().next().value;
+                this.template = this.#children.get(firstKey);
             }
 
-            const handlers = this.handlers[type];
-            const actionEvent = new ActionEvent(event);
-            actionEvent.type = type;
-            actionEvent.namespace = namespaces.join(".");
-            actionEvent.rnamespace = actionEvent.namespace ?
-                new RegExp("(^|\\.)" + namespaces.join("\\.(?:.*\\.|)") + "(\\.|$)") :
-                null;
-
-            if (!actionEvent.target) {
-                actionEvent.target = actionInput.target;
+            // 模板为元素：克隆一份（避免修改原元素）
+            if (this.template instanceof HTMLElement) {
+                this.template = this.template.cloneNode(true);
+                this.#hasTemplate = true;
+                return;
+            } else {
+                // 兜底：空div
+                this.template = div.cloneNode(true);
             }
 
-            const path = actionEvent.getComposedPath(actionInput.target);
+        }
 
-            PuSet.each(handlers, function (handleObj, i) {
+        /**
+         * 初始化数据代理（监听数据变更）
+         */
+        #initializeDataProxy() {
+            this.data = new Proxy(this.source, {
+                // 监听属性设置
+                set: (target, property, value, receiver) => {
+                    this.#handleDataChange(target, property, value, receiver);
+                    return Reflect.set(target, property, value, receiver);
+                },
+                // 监听属性删除
+                deleteProperty: (target, property) => {
+                    PuSetFactory.show(this.#children.get(property), false);
+                    return Reflect.deleteProperty(target, property);
+                }
+            });
+            if (this.#isArrayData) {
+                this.#handleLengthChange(this.data.length);
+            }
+        }
 
-                if (actionEvent.isCustom === handleObj.isCustom) {
-
-                    const entrus = function (elem) {
-
-                        // If the event is namespaced, then each handler is only invoked if it is
-                        // specially universal or its namespaces are a superset of the event's.
-                        if (!actionEvent.rnamespace || handleObj.namespace === false ||
-                            actionEvent.rnamespace.test(handleObj.namespace)) {
-
-                            handleObj.handler.call(elem, actionEvent);
-                        }
-                    };
-
-                    if (handleObj.selector) {
-                        const selector = toArray(PuSet(handleObj.selector, actionInput.target));
-                        if (selector.length) {
-                            PuSet.each(path.filter(item => selector.includes(item)), entrus);
-                        }
+        /**
+         * 处理数据变更
+         * @param {Object|Array} target - 原始数据
+         * @param {string} property - 变更的属性/索引
+         * @param {*} value - 新值
+         * @param {Proxy} receiver - 代理对象
+         */
+        #handleDataChange(target, property, value, receiver) {
+            let node = this.target;
+            // 有模板时处理
+            if (this.#hasTemplate) {
+                if (this.#isArrayData) {
+                    // 数组：处理length或索引
+                    if (property === 'length') {
+                        return void this.#handleLengthChange(value);
                     } else {
-                        entrus(actionInput.target);
+                        node = this.#getChild(node, property, value, receiver);
                     }
-
-                    // 删除只需要触发一次的事件监听
-                    if (handleObj.one) {
-                        removedItems.push(i);
-                    }
-
+                } else {
+                    // 对象：处理属性
+                    node = this.#getChild(node, property, value, receiver);
                 }
-            });
-
-            let length = removedItems.length;
-            while (length--) {
-                handlers.splice(removedItems[length], 1);
             }
-
-            // 移除事件监听
-            if (!handlers || handlers.length === 0) {
-                removeEventListener(actionInput.target, type, actionInput.listener);
-            }
-
+            // 普通属性变更
+            this.#handlePropertyChange(node, value, property, receiver);
         }
-
-    });
-
-    const ActionInputMap = {
-        /** @type {Map<Element, ActionInput>} */
-        data: new Map(),
-        /**
-         * 
-         * @param {Element} elem 
-         * @returns {ActionInput}
-         */
-        get: function (elem) {
-            if (!this.data.has(elem)) {
-                this.data.set(elem, new ActionInput(elem));
-            }
-            return this.data.get(elem);
-        },
-
-        remove: function (elem) {
-            this.data.delete(elem);
-        }
-
-    };
-
-    PuSet.extend({
-
-        ActionEvent: ActionEvent,
 
         /**
-         * 获取元素的行为交互监听集合
-         * @param {HTMLElement} target 目标元素
-         * @param {boolean} init 是否初始化触摸事件环境
-         * @returns {ActionInput}
+         * 处理数组长度变更
+         * @param {number} newLength - 新长度
          */
-        getActionInput: function getActionInput(target, init) {
-            return init === true ? ActionInputMap.get(target).init() : ActionInputMap.get(target);
+        #handleLengthChange(newLength) {
+            // 隐藏超出新长度的元素
+            for (let i = newLength, oldLength = this.childCount; i < oldLength; i++) {
+                PuSetFactory.show(this.#children.get(String(i)), false);
+            }
+            // 触发resize回调
+            if (this.#hasResize) {
+                this.onresize(this.target, newLength, 'length');
+            }
         }
 
-    });
+        /**
+         * 处理普通属性变更
+         * @param {HTMLElement} node - 目标元素
+         * @param {*} value - 新值
+         * @param {string} property - 属性名/索引
+         */
+        #handlePropertyChange(node, value, property) {
+            PuSetFactory.show(node, true); // 显示元素
+            // 执行布局函数
+            if (this.#hasLayout) {
+                this.layout(node, value, property, this);
+            }
+        }
 
-    PuSet.fn.extend({
-        on: function (types, selector, fn) {
-            return this.each(function (target) {
-                PuSet.getActionInput(target, false).add(types, selector, fn, false, true);
-            });
-        },
-        one: function (types, selector, fn) {
-            return this.each(function (target) {
-                PuSet.getActionInput(target, false).add(types, selector, fn, true, true);
-            });
-        },
-        setInputClass: function (inputClass) {
-            return this.each(function (target) {
-                PuSet.getActionInput(target, false).inputClass = inputClass;
-            });
-        },
-        setManager: function (fn) {
-            return this.each(function (target) {
-                fn(PuSet.getActionInput(target, true).manager);
-            });
-        },
-        action: function (types, selector, fn) {
-            return this.each(function (target) {
-                PuSet.getActionInput(target, true).add(types, selector, fn, false, false);
-            });
-        },
-        off: function (types, selector, fn) {
+        /**
+         * 设置子元素映射
+         * @param {string|number} key - 数据键/索引
+         * @param {HTMLElement} element - 子元素
+         */
+        #setChild(key, element) {
+            element[ViewModel.index] = key;
+            this.#children.set(key, element);
+        }
 
-            if (typeof types === TYPE_OBJECT) {
+        /**
+         * 获取/创建子元素（不存在则从模板创建）
+         * @param {string|number} key - 索引/键
+         * @param {*} value - 最新值
+         * @returns {HTMLElement} 子元素
+         */
+        #getChild(node, key, value) {
+            let child = this.#children.get(key);
+            // 不存在则创建
+            if (!child) {
+                child = this.#isFunctionTemplate
+                    ? this.template(node, key, value)
+                    : this.template.cloneNode(true);
 
-                // ( types-object [, selector] )
-                for (let type in types) {
-                    this.off(type, selector, types[type]);
+                this.#setChild(key, child);
+                if (this.#isInsert) {
+                    // 插入到指定位置前
+                    this.target.insertBefore(child, this.insert);
+                } else {
+                    // 追加到容器末尾
+                    this.target.appendChild(child);
                 }
-                return this;
             }
+            return child;
+        }
 
-            if (selector === false || typeof selector === TYPE_FUNCTION) {
+        /**
+         * 绑定事件
+         * @param {string} types - 事件类型
+         * @param {Function} fn - 事件处理函数
+         * @returns {ViewModel} this
+         */
+        on(types, fn) {
+            const children = this.#children, data = this.data;
+            add(this.target, types, null, function (event, options) {
+                const set = new Set();
+                // 遍历传播路径，找到匹配的子元素
+                for (let key, item, i = 0, m = options.path.length; i < m; i++) {
+                    item = options.path[i], key = item[ViewModel.index];
+                    if (key && children.get(key) === item) {
+                        // 执行委托函数（绑定到子元素，传事件、数据、键）
+                        set.add(fn.call(item, event, data[key], key, options));
+                    }
+                }
+                return !set.has(false);
+            }, `.${this.instanceId}`);
+            return this;
+        }
 
-                // ( types [, fn] )
-                fn = selector;
-                selector = undefined;
+        /**
+         * 更新数据（合并新数据）
+         * @param {Object|Array} newData - 新数据
+         */
+        update(newData) {
+            Object.assign(this.data, newData);
+            if (this.isArrayData) {
+                this.data.length = newData.length;
             }
-            if (fn === false) {
-                fn = returnFalse;
-            }
+        }
 
-            return this.each(function (target) {
-                PuSet.getActionInput(target, false).remove(types, selector, fn, false);
+        relayout(key, value = this.data[key]) {
+            const child = this.#getChild(this.target, String(key), value);
+            this.#handlePropertyChange(child, value, key, this.data);
+        }
+
+        /**
+         * 移除隐藏的子元素
+         */
+        dismiss() {
+            this.#children.forEach(function (child, key, map) {
+                if (HIDE_ATTRIBUTE === child.getAttribute(HIDE_ATTRIBUTE)) {
+                    if (map.delete(key)) {
+                        child.remove();
+                    } else {
+                        console.warn("无法删除子元素：" + key);
+                    }
+                }
             });
-        },
-        trigger: function (type) {
-            return this.each(function (target) {
-                PuSet.getActionInput(target, false).trigger(type);
-            });
-        }
-    });
-
-    let
-
-        // Map over PuSet in case of overwrite
-        _PuSet = window.PuSet,
-
-        // Map over the $ in case of overwrite
-        _$ = window.$;
-
-    PuSet.noConflict = function (deep) {
-        if (window.$ === PuSet) {
-            window.$ = _$;
         }
 
-        if (deep && window.PuSet === PuSet) {
-            window.PuSet = _PuSet;
+        /**
+         * 获取子元素数量（只读）
+         * @returns {number} 子元素数量
+         */
+        get childCount() {
+            return this.#children.size;
         }
-
-        return PuSet;
-    };
-
-    // Expose PuSet and $ identifiers, even in AMD
-    // (#7102#comment:10, https://github.com/jquery/jquery/pull/557)
-    // and CommonJS for browser emulators (#13566)
-    if (typeof noGlobal === "undefined") {
-        window.PuSet = window.$ = PuSet;
     }
 
-    return PuSet;
+    // ===================== 配对绑定 PairedBuilder =====================
+    /**
+     * 配对绑定构建器
+     * - 链式声明 "数据键 → DOM 操作" 的映射
+     * - build() 返回 (node, value, key) => void，可直接当 layout 用
+     */
+    class PairedBuilder {
 
-});
+        #stop = false;
+
+        #entries = new Map();
+
+        #push(op, key, selector, arg = key) {
+            if (this.#stop) {
+                throw new Error('PairedBuilder 已 build()，不能再添加操作');
+            }
+            if (typeof key !== 'string' || key === '') {
+                throw new TypeError('PuSet.paired: key 必须是非空字符串');
+            }
+            // selector 为 null/undefined → 默认 .key
+            const sel = selector ?? ('.' + key);
+            if (typeof sel !== 'string' || sel === '') {
+                throw new TypeError('PuSet.paired: selector 必须是非空字符串');
+            }
+            const entry = { op, selector: sel, key, arg };
+            if (this.#entries.has(key)) {
+                this.#entries.get(key).push(entry)
+            } else {
+                this.#entries.set(entry.key, [entry])
+            }
+            return this;
+        }
+
+        // ---- 快捷方法（拼错立刻报错） ----
+        text(key, selector) { return this.#push('text', key, selector); }
+        html(key, selector) { return this.#push('html', key, selector); }
+        value(key, selector) { return this.#push('value', key, selector); }
+        attr(key, selector, name) { return this.#push('attr', key, selector, name); }
+        prop(key, selector, name) { return this.#push('prop', key, selector, name); }
+        data(key, selector, name) { return this.#push('data', key, selector, name); }
+        class(key, selector, name) { return this.#push('class', key, selector, name); }
+        css(key, selector, name) { return this.#push('css', key, selector, name); }
+        show(key, selector) { return this.#push('show', key, selector); }
+        hide(key, selector) { return this.#push('hide', key, selector); }
+
+        // ---- 通用入口 ----
+        // 用 op 操作 将 obj[key] 赋值给 selector 选中元素 name
+        // op 是内置操作名 → 走内置；否则一律当作属性名（setAttribute）
+        append(op, key, selector, name = null) { return this.#push(op, key, selector, name); }
+
+        /**
+         * 构建布局函数
+         * @returns {(node: HTMLElement, value: any, key: string) => void}
+         */
+        build() {
+            this.#stop = true;
+
+            const entries = this.#entries;
+
+            const xxx = function (node, value, key) {
+                const actions = entries.get(key);
+                if (!actions) return;
+
+                for (let i = 0; i < actions.length; i++) {
+                    const { op, selector, arg } = actions[i];
+                    // 约定自身选择器
+                    if (selector === "&" || selector === ":scope") {
+                        applyPairedOp(node, op, value, arg);
+                    } else {
+                        node.querySelectorAll(selector).forEach(target => applyPairedOp(target, op, value, arg));
+                    }
+                }
+            }
+
+            return function pairedLayout(node, value, key, vm) {
+                if (!node) return;
+                if (vm.isArrayData) {
+                    if (value == null) return;
+                    for (const k of entries.keys()) {
+                        xxx(node, value[k], k)
+                    }
+                } else xxx(node, value, key)
+            };
+        }
+    }
+
+    /**
+     * 单条操作映射表
+     * 每个 handler 签名：(el, value, arg) => void
+     */
+    const PAIRED_OPS = {
+        text(el, value) {
+            el.textContent = value == null ? '' : String(value);
+        },
+
+        html(el, value) {
+            el.innerHTML = value == null ? '' : String(value);
+        },
+
+        value(el, value) {
+            // 兼容 checkbox / radio
+            if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!value;
+            else el.value = value == null ? '' : String(value);
+        },
+
+        attr(el, value, arg) {
+            if (value == null || value === false) el.removeAttribute(arg);
+            else el.setAttribute(arg, value === true ? '' : String(value));
+        },
+
+        prop(el, value, arg) {
+            el[arg] = value;
+        },
+
+        data(el, value, arg) {
+            el.dataset[arg] = value
+        },
+
+        css(el, value, arg) {
+            if (arg.includes('-')) {
+                // kebab-case
+                if (value == null || value === false) el.style.removeProperty(arg);
+                else el.style.setProperty(arg, String(value));
+            } else {
+                // camelCase，用驼峰键
+                if (value == null || value === false) el.style[arg] = '';
+                else el.style[arg] = String(value);
+            }
+        },
+
+        class(el, value, arg) {
+            el.classList.toggle(arg, !!value);
+        },
+
+        show(el, value) {
+            PuSetFactory.show(el, !!value);      // ← 直接复用
+        },
+
+        hide(el, value) {
+            PuSetFactory.show(el, !value);       // ← 直接复用
+        },
+    };
+
+    /**
+     * 应用单条操作
+     */
+    function applyPairedOp(el, op, value, arg) {
+        // 用 hasOwn 判定，避免命中原型链上的 constructor / toString 等
+        if (Object.hasOwn(PAIRED_OPS, op)) {
+            PAIRED_OPS[op](el, value, arg);
+            return;
+        }
+
+        // 非内置 op：当作属性名处理（setAttribute）
+        if (value == null || value === false) el.removeAttribute(op);
+        else el.setAttribute(op, value === true ? '' : String(value));
+    }
+
+    // 挂到工厂上
+    Object.assign(PuSetFactory, {
+        /**
+         * 创建配对绑定构建器
+         * @returns {PairedBuilder}
+         */
+        paired() {
+            return new PairedBuilder();
+        }
+    });
+
+    // 暴露ViewManager创建方法
+    PuSetFactory.mvvm = PuSetFactory.ViewManager = options => new ViewModel(options);
+
+    // ===================== 文档解析工具 =====================
+    // 扩展HTML/XHTML/XML/SVG解析方法
+    PuSetFactory.each({
+        "HTML": "text/html",
+        "XHTML": "application/xhtml+xml",
+        "XML": "application/xml",
+        "SVG": "image/svg+xml"
+    }, function (mimetype, name) {
+        /**
+         * 解析字符串为对应类型的文档
+         * @param {string} text - 待解析的字符串
+         * @returns {Document} 解析后的文档对象
+         */
+        PuSetFactory["parse" + name] = text => (new window.DOMParser).parseFromString(text, mimetype);
+    });
+
+    // ===================== 组件化模板管理（ViewComponent） =====================
+    const HOST_CLASS_NAME = "template-layer-host"; // 组件宿主元素类名
+    const DEFAULT_NAME = "default"; // 默认组件名/命名空间
+    const HEAD_STYLE = new Set(); // 已注入head的样式ID集合（避免重复）
+
+    /**
+     * 组件类 - 管理模板、样式、脚本，支持Shadow DOM
+     */
+    class ViewComponent {
+        namespace = DEFAULT_NAME; // 命名空间
+        name = ""; // 组件名
+        longName = ""; // 完整名称（puset-命名空间-组件名）
+        exec = returnFalse; // 组件初始化函数
+        styleNode = null; // 样式节点
+        cachedElements = null; // 缓存的视图元素
+
+        /**
+         * 构造函数
+         * @param {string} namespace - 命名空间
+         * @param {string} name - 组件名
+         * @param {Array} nodes - 视图元素数组
+         * @param {HTMLElement} style - 样式节点
+         * @param {Function} handler - 初始化函数
+         */
+        constructor(namespace, name, nodes, style, handler) {
+            this.namespace = namespace;
+            this.name = name;
+            this.longName = ["puset", namespace, name].join("-"); // 生成唯一名称
+            this.styleNode = style;
+            this.cachedElements = nodes;
+            this.exec = isFunction(handler) ? handler : returnFalse; // 初始化函数兜底
+
+            // 处理样式（注入到head）
+            if (style) {
+                const className = this.longName;
+                // 避免重复注入
+                if (HEAD_STYLE.has(className)) {
+                    return void console.warn("已跳过添加重复样式：", className);
+                }
+                const style2 = main_document.createElementNS(NS_HTML, "style");
+                HEAD_STYLE.add(style2.id = className); // 标记已注入
+                style2.textContent = `.${className}{${style.textContent}}`; // 包装样式
+                main_document.head.appendChild(style2);
+            }
+        }
+
+        /**
+         * 初始化组件（创建DOM/Shadow DOM）
+         * @param  {...any} args - 入参（支持container/isRootDOM/handler）
+         * @returns {HTMLElement|ShadowRoot} 组件根节点
+         */
+        init(...args) {
+            // 解析入参（按类型分类）
+            const {
+                'object': container,          // 容器元素
+                'boolean': isRootDOM = false, // 是否使用根DOM（不创建Shadow DOM）
+                'function': handler           // 组件初始化回调
+            } = Object.fromEntries(args.map(arg => [typeof arg, arg]));
+
+            // 创建容器（默认div）
+            const clone = container ? container : main_document.createElementNS(NS_HTML, "div");
+            if (clone.nodeType !== Node.ELEMENT_NODE) {
+                throw new TypeError("Invalid container");
+            }
+
+            // 创建根节点（Shadow DOM或原始DOM）
+            const root = isRootDOM ? clone : clone.attachShadow({ mode: "open" });
+            clone.classList.add(HOST_CLASS_NAME, this.longName); // 添加类名
+
+            // 非根DOM且有样式：复制样式到Shadow DOM
+            if (!isRootDOM && this.styleNode) {
+                root.appendChild(this.styleNode.cloneNode(true));
+            }
+
+            // 复制视图元素到根节点
+            for (const node of this.cachedElements) {
+                root.appendChild(node.cloneNode(true));
+            }
+
+            // 执行初始化回调
+            return (isFunction(handler) && handler(root, this)) || root;
+        }
+    }
+
+    // 组件实例缓存（命名空间 → 组件名 → ViewComponent）
+    const COMPONENT_REGISTRY = new Map();
+    // 默认组件（兜底）
+    const DEFAULT_COMPONENT = new ViewComponent(DEFAULT_NAME, DEFAULT_NAME, PuSetFactory(main_document.createElementNS(NS_HTML, "div")));
+
+    /**
+     * 获取命名空间对应的组件映射
+     * @param {string} [namespace=DEFAULT_NAME] - 命名空间
+     * @returns {Map} 组件映射（组件名 → ViewComponent）
+     */
+    const getNamespaceMap = function getNamespaceMap(namespace = DEFAULT_NAME) {
+        if (!COMPONENT_REGISTRY.has(namespace)) {
+            COMPONENT_REGISTRY.set(namespace, new Map());
+        }
+        return COMPONENT_REGISTRY.get(namespace);
+    };
+
+    // 初始化默认命名空间的默认组件
+    getNamespaceMap(DEFAULT_NAME).set(DEFAULT_NAME, DEFAULT_COMPONENT);
+
+    // 扩展组件管理方法
+    Object.assign(PuSetFactory, {
+
+        ensureObjectProperty,
+
+        /**
+         * 获取组件实例
+         * @param {string} [name=DEFAULT_NAME] - 组件名
+         * @param {string} [namespace=DEFAULT_NAME] - 命名空间
+         * @returns {ViewComponent} 组件实例（默认组件兜底）
+         */
+        get(name = DEFAULT_NAME, namespace = DEFAULT_NAME) {
+            const namespaceMap = getNamespaceMap(namespace);
+            return namespaceMap.has(name) ? namespaceMap.get(name) : DEFAULT_COMPONENT;
+        },
+        /**
+         * 获取所有命名空间
+         * @returns {Array} 命名空间数组
+         */
+        getNamespaces() {
+            return Array.from(COMPONENT_REGISTRY.keys());
+        },
+        /**
+         * 移除命名空间（默认命名空间不可移除）
+         * @param {string} [namespace=DEFAULT_NAME] - 命名空间
+         * @returns {boolean} 是否移除成功
+         */
+        removeNamespace(namespace = DEFAULT_NAME) {
+            if (namespace === DEFAULT_NAME) return false;
+            return COMPONENT_REGISTRY.delete(namespace);
+        },
+        /**
+         * 获取指定命名空间下的所有组件名
+         * @param {string} [namespace=DEFAULT_NAME] - 命名空间
+         * @returns {Array|null} 组件名数组（不存在则返回null）
+         */
+        getComponents(namespace = DEFAULT_NAME) {
+            return COMPONENT_REGISTRY.has(namespace) ? Array.from(COMPONENT_REGISTRY.get(namespace).keys()) : null;
+        },
+        /**
+         * 加载远程模板文件（同源）
+         * @param {string} url - 模板文件URL（必须同源）
+         * @param {string} [namespace=DEFAULT_NAME] - 命名空间
+         * @returns {Promise<Array>} 加载的模板节点数组
+         */
+        async load(url, namespace = DEFAULT_NAME) {
+            // 同源校验
+            const testURL = new URL(url, window.location.href);
+            if (testURL.origin !== window.location.origin) {
+                throw new Error("同源策略限制：不允许跨域加载资源");
+            }
+
+            // 加载文件
+            const response = await fetch(testURL.href);
+            if (!response.ok) {
+                throw new Error(`HTTP请求失败：${response.status}${response.statusText}`);
+            }
+            const text = await response.text();
+
+            // 解析模板（查找hr#puset-interpreter-template后的template元素）
+            const templateList = PuSetFactory("hr#puset-interpreter-template~template", PuSetFactory.parseHTML(text));
+            if (templateList.length === 0) {
+                throw new Error("未找到有效的模板元素");
+            }
+
+            const funcName = PuSetFactory.name; // 工厂函数名（PuSet）
+            const namespaceMap = getNamespaceMap(namespace);
+
+            // 处理每个模板
+            for (const node of templateList) {
+                const id = node.id;
+                if (!id) {
+                    console.warn("已跳过未命名模板", node);
+                    continue;
+                }
+
+                // 解析模板内的元素（style/script/普通元素）
+                const $elements = new PuSetConstructor();
+                for (const child of node.content.children) {
+                    switch (child.nodeName.toLowerCase()) {
+                        case "style":
+                            $elements.style = child;
+                            break;
+                        case "script":
+                            $elements.script = child;
+                            break;
+                        default:
+                            $elements.push(child);
+                    }
+                }
+
+                const { style, script } = $elements;
+                // 无视图元素则跳过
+                if (!$elements.length) {
+                    console.warn(`模板${id}缺少视图元素，已跳过`);
+                    continue;
+                }
+
+                // 解析脚本（初始化函数）
+                let handler = returnFalse;
+                if (script && script.innerText) {
+                    try {
+                        // 执行脚本，传入PuSetFactory
+                        handler = (new Function(funcName, script.innerText)).call($elements, PuSetFactory);
+                    } catch (err) {
+                        console.error(`执行模板${id}脚本时出错:`, err);
+                        handler = returnFalse;
+                    }
+                }
+
+                // 创建组件实例并缓存
+                namespaceMap.set(id, new ViewComponent(namespace, id, $elements, style, handler));
+            }
+
+            return templateList;
+        }
+    });
+
+    // 暴露PuSetFactory作为最终的PuSet对象
+    return PuSetFactory;
+})();
